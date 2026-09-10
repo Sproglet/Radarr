@@ -16,7 +16,7 @@ namespace NzbDrone.Core.Test.Housekeeping.Housekeepers
     public class CleanupOrphanedMovieFilesFixture : DbTest<CleanupOrphanedMovieFiles, MovieFile>
     {
         [Test]
-        public void should_delete_orphaned_episode_files()
+        public void should_delete_files_without_a_parent_movie()
         {
             var movieFile = Builder<MovieFile>.CreateNew()
                                                   .With(h => h.Quality = new QualityModel())
@@ -45,9 +45,35 @@ namespace NzbDrone.Core.Test.Housekeeping.Housekeepers
 
             Db.Insert(movie);
 
+            foreach (var movieFile in movieFiles)
+            {
+                movieFile.MovieId = movie.Id;
+                Db.Update(movieFile);
+            }
+
             Subject.Clean();
-            AllStoredModels.Should().HaveCount(1);
-            Db.All<Movie>().Should().Contain(e => e.MovieFileId == AllStoredModels.First().Id);
+            AllStoredModels.Should().HaveCount(2);
+        }
+
+        [Test]
+        public void should_preserve_unassigned_files_when_parent_has_no_current_file()
+        {
+            var movie = Builder<Movie>.CreateNew()
+                .With(m => m.MovieFileId = 0)
+                .BuildNew();
+            Db.Insert(movie);
+
+            var file = Builder<MovieFile>.CreateNew()
+                .With(f => f.MovieId = movie.Id)
+                .With(f => f.MovieEditionId = null)
+                .With(f => f.Quality = new QualityModel())
+                .With(f => f.Languages = new List<Language> { Language.English })
+                .BuildNew();
+            Db.Insert(file);
+
+            Subject.Clean();
+
+            AllStoredModels.Should().ContainSingle().Which.Id.Should().Be(file.Id);
         }
     }
 }

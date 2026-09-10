@@ -34,6 +34,7 @@ namespace NzbDrone.Core.Movies
         public DateTime? LastSearchTime { get; set; }
         public MovieFile MovieFile { get; set; }
         public int MovieFileId { get; set; }
+        public int? PrimaryEditionId { get; set; }
 
         public bool HasFile => MovieFileId > 0;
 
