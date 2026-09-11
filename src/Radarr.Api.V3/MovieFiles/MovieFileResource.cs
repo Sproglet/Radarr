@@ -14,6 +14,7 @@ namespace Radarr.Api.V3.MovieFiles
     public class MovieFileResource : RestResource
     {
         public int MovieId { get; set; }
+        public int? MovieEditionId { get; set; }
         public string RelativePath { get; set; }
         public string Path { get; set; }
         public long Size { get; set; }
@@ -46,6 +47,7 @@ namespace Radarr.Api.V3.MovieFiles
                 Id = model.Id,
 
                 MovieId = model.MovieId,
+                MovieEditionId = model.MovieEditionId,
                 RelativePath = model.RelativePath,
 
                 // Path
@@ -74,6 +76,7 @@ namespace Radarr.Api.V3.MovieFiles
                 Id = model.Id,
 
                 MovieId = model.MovieId,
+                MovieEditionId = model.MovieEditionId,
                 RelativePath = model.RelativePath,
                 Path = Path.Combine(movie.Path, model.RelativePath),
                 Size = model.Size,

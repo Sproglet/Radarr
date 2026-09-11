@@ -21,6 +21,7 @@ namespace Radarr.Api.V3.ManualImport
         public long Size { get; set; }
         public MovieResource Movie { get; set; }
         public int? MovieFileId { get; set; }
+        public int? MovieEditionId { get; set; }
         public string ReleaseGroup { get; set; }
         public QualityModel Quality { get; set; }
         public List<Language> Languages { get; set; }
@@ -42,7 +43,7 @@ namespace Radarr.Api.V3.ManualImport
             }
 
             var customFormats = model.CustomFormats;
-            var customFormatScore = model.Movie?.QualityProfile?.CalculateCustomFormatScore(customFormats) ?? 0;
+            var customFormatScore = model.CustomFormatScore;
 
             return new ManualImportResource
             {
@@ -54,6 +55,7 @@ namespace Radarr.Api.V3.ManualImport
                 Size = model.Size,
                 Movie = model.Movie.ToResource(0),
                 MovieFileId = model.MovieFileId,
+                MovieEditionId = model.MovieEditionId,
                 ReleaseGroup = model.ReleaseGroup,
                 Quality = model.Quality,
                 Languages = model.Languages,

@@ -15,6 +15,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
         public long Size { get; set; }
         public Movie Movie { get; set; }
         public int? MovieFileId { get; set; }
+        public int? MovieEditionId { get; set; }
         public QualityModel Quality { get; set; } = new();
         public List<Language> Languages { get; set; } = new();
         public string ReleaseGroup { get; set; }

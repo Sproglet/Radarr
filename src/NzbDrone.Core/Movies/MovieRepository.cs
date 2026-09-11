@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using Dapper;
 using NzbDrone.Core.Datastore;
@@ -48,6 +49,52 @@ namespace NzbDrone.Core.Movies
             _alternativeTitleRepository = alternativeTitleRepository;
         }
 
+        protected override bool RequiresLifecycleTransaction => true;
+
+        protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, Movie movie)
+        {
+            MovieEditionLifecycle.CreateDefault(connection, transaction, movie.Id);
+            var stored = connection.QuerySingle<Movie>(@"SELECT * FROM ""Movies"" WHERE ""Id"" = @Id", new { movie.Id }, transaction);
+            movie.PrimaryEditionId = stored.PrimaryEditionId;
+            movie.MovieFileId = stored.MovieFileId;
+            if (movie.MovieFile?.Id != movie.MovieFileId)
+            {
+                movie.MovieFile = connection.QuerySingleOrDefault<MovieFile>(@"SELECT * FROM ""MovieFiles""
+                    WHERE ""Id"" = @MovieFileId AND ""MovieId"" = @Id", movie, transaction);
+            }
+        }
+
+        protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, Movie movie, List<string> properties)
+        {
+            // Lock the parent before touching edition rows, also used by assignment and primary switching.
+            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id"" WHERE ""Id"" = @Id", new { movie.Id }, transaction);
+            var stored = connection.QuerySingle<Movie>(@"SELECT * FROM ""Movies"" WHERE ""Id"" = @Id", new { movie.Id }, transaction);
+            movie.PrimaryEditionId = stored.PrimaryEditionId;
+            movie.MovieFileId = stored.MovieFileId;
+            if (movie.MovieFile?.Id != movie.MovieFileId)
+            {
+                movie.MovieFile = connection.QuerySingleOrDefault<MovieFile>(@"SELECT * FROM ""MovieFiles""
+                    WHERE ""Id"" = @MovieFileId AND ""MovieId"" = @Id", movie, transaction);
+            }
+
+            if (properties.Contains(nameof(Movie.QualityProfileId)))
+            {
+                connection.Execute(@"UPDATE ""MovieEditions"" SET ""QualityProfileId"" = @QualityProfileId
+                    WHERE ""Id"" = @PrimaryEditionId AND ""MovieId"" = @Id", movie, transaction);
+            }
+
+            if (properties.Contains(nameof(Movie.LastSearchTime)))
+            {
+                connection.Execute(@"UPDATE ""MovieEditions"" SET ""LastSearchTime"" = @LastSearchTime
+                    WHERE ""Id"" = @PrimaryEditionId AND ""MovieId"" = @Id", movie, transaction);
+            }
+        }
+
+        protected override void OnDeleted(IDbConnection connection, IDbTransaction transaction)
+        {
+            MovieEditionLifecycle.RemoveOrphanedEditions(connection, transaction);
+        }
+
         protected override IEnumerable<Movie> PagedQuery(SqlBuilder builder) =>
             _database.QueryJoined<Movie, MovieMetadata>(builder, (movie, movieMetadata) =>
             {
@@ -58,7 +105,7 @@ namespace NzbDrone.Core.Movies
         protected override SqlBuilder Builder() => new SqlBuilder(_database.DatabaseType)
             .Join<Movie, QualityProfile>((m, p) => m.QualityProfileId == p.Id)
             .Join<Movie, MovieMetadata>((m, p) => m.MovieMetadataId == p.Id)
-            .LeftJoin<Movie, MovieFile>((m, f) => m.Id == f.MovieId)
+            .LeftJoin<Movie, MovieFile>((m, f) => m.MovieFileId == f.Id && m.Id == f.MovieId)
             .LeftJoin<MovieMetadata, AlternativeTitle>((mm, t) => mm.Id == t.MovieMetadataId);
 
         private Movie Map(Dictionary<int, Movie> dict, Movie movie, MovieMetadata metadata, QualityProfile qualityProfile, MovieFile movieFile, AlternativeTitle altTitle = null, MovieTranslation translation = null)
@@ -102,7 +149,7 @@ namespace NzbDrone.Core.Movies
             // to avoid repeatedly deserializing the same profile / movie
             var builder = new SqlBuilder(_database.DatabaseType)
                 .LeftJoin<Movie, MovieMetadata>((m, f) => m.MovieMetadataId == f.Id)
-                .LeftJoin<Movie, MovieFile>((m, f) => m.MovieFileId == f.Id);
+                .LeftJoin<Movie, MovieFile>((m, f) => m.MovieFileId == f.Id && m.Id == f.MovieId);
 
             var qualityProfiles = _profileRepository.All().ToDictionary(x => x.Id);
             var alternativeTitles = _alternativeTitleRepository.All()
@@ -153,7 +200,7 @@ namespace NzbDrone.Core.Movies
             var builder = new SqlBuilder(_database.DatabaseType)
                 .Join<Movie, QualityProfile>((m, p) => m.QualityProfileId == p.Id)
                 .Join<Movie, MovieMetadata>((m, p) => m.MovieMetadataId == p.Id)
-                .LeftJoin<Movie, MovieFile>((m, f) => m.Id == f.MovieId)
+                .LeftJoin<Movie, MovieFile>((m, f) => m.MovieFileId == f.Id && m.Id == f.MovieId)
                 .Where<MovieMetadata>(x => titles.Contains(x.CleanTitle) || titles.Contains(x.CleanOriginalTitle));
 
             _ = _database.QueryJoined<Movie, MovieMetadata, QualityProfile, MovieFile>(
@@ -171,7 +218,7 @@ namespace NzbDrone.Core.Movies
                 .Join<AlternativeTitle, MovieMetadata>((t, mm) => t.MovieMetadataId == mm.Id)
                 .Join<MovieMetadata, Movie>((mm, m) => mm.Id == m.MovieMetadataId)
                 .Join<Movie, QualityProfile>((m, p) => m.QualityProfileId == p.Id)
-                .LeftJoin<Movie, MovieFile>((m, f) => m.Id == f.MovieId)
+                .LeftJoin<Movie, MovieFile>((m, f) => m.MovieFileId == f.Id && m.Id == f.MovieId)
                 .Where<AlternativeTitle>(x => titles.Contains(x.CleanTitle));
 
             _ = _database.QueryJoined<AlternativeTitle, QualityProfile, Movie, MovieMetadata, MovieFile>(
@@ -193,7 +240,7 @@ namespace NzbDrone.Core.Movies
                 .Join<MovieTranslation, MovieMetadata>((t, mm) => t.MovieMetadataId == mm.Id)
                 .Join<MovieMetadata, Movie>((mm, m) => mm.Id == m.MovieMetadataId)
                 .Join<Movie, QualityProfile>((m, p) => m.QualityProfileId == p.Id)
-                .LeftJoin<Movie, MovieFile>((m, f) => m.Id == f.MovieId)
+                .LeftJoin<Movie, MovieFile>((m, f) => m.MovieFileId == f.Id && m.Id == f.MovieId)
                 .Where<MovieTranslation>(x => titles.Contains(x.CleanTitle));
 
             _ = _database.QueryJoined<MovieTranslation, QualityProfile, Movie, MovieMetadata, MovieFile>(

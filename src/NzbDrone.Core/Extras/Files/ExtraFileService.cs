@@ -26,7 +26,7 @@ namespace NzbDrone.Core.Extras.Files
     }
 
     public abstract class ExtraFileService<TExtraFile> : IExtraFileService<TExtraFile>,
-                                                         IHandleAsync<MovieFileDeletedEvent>,
+                                                         IHandle<MovieFileDeletedEvent>,
                                                          IHandleAsync<MoviesDeletedEvent>
         where TExtraFile : ExtraFile, new()
     {
@@ -100,7 +100,7 @@ namespace NzbDrone.Core.Extras.Files
             _repository.DeleteForMovies(message.Movies.Select(m => m.Id).ToList());
         }
 
-        public void HandleAsync(MovieFileDeletedEvent message)
+        public void Handle(MovieFileDeletedEvent message)
         {
             var movieFile = message.MovieFile;
 

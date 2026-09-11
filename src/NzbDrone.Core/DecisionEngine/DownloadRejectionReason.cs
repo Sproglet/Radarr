@@ -64,5 +64,6 @@ public enum DownloadRejectionReason
     DiskCustomFormatCutoffMet,
     DiskCustomFormatScore,
     DiskCustomFormatScoreIncrement,
-    DiskUpgradesNotAllowed
+    DiskUpgradesNotAllowed,
+    MultiEditionAcquisitionDisabled
 }

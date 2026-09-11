@@ -106,6 +106,16 @@ namespace NzbDrone.Core.Extras.Others
                         hasNfo = true;
                     }
 
+                    if (localMovie.EditionContext != null)
+                    {
+                        if (ExtraFileOwnerResolver.Matches(sourcePath, file))
+                        {
+                            matchingFiles.Add(file);
+                        }
+
+                        continue;
+                    }
+
                     // Filename match
                     if (Path.GetFileNameWithoutExtension(file).StartsWith(sourceFileName, StringComparison.InvariantCultureIgnoreCase))
                     {

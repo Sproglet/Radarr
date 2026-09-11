@@ -16,17 +16,20 @@ namespace NzbDrone.Core.Extras.Subtitles
         private readonly IExtraFileService<SubtitleFile> _subtitleFileService;
         private readonly IAggregationService _aggregationService;
         private readonly IParsingService _parsingService;
+        private readonly IExtraFileOwnerResolver _owners;
         private readonly Logger _logger;
 
         public ExistingSubtitleImporter(IExtraFileService<SubtitleFile> subtitleFileService,
                                         IAggregationService aggregationService,
                                         IParsingService parsingService,
+                                        IExtraFileOwnerResolver owners,
                                         Logger logger)
             : base(subtitleFileService)
         {
             _subtitleFileService = subtitleFileService;
             _aggregationService = aggregationService;
             _parsingService = parsingService;
+            _owners = owners;
             _logger = logger;
         }
 
@@ -53,10 +56,17 @@ namespace NzbDrone.Core.Extras.Subtitles
                         continue;
                     }
 
+                    var owner = _owners.Resolve(movie, possibleSubtitleFile, fileNameBeforeRename);
+                    if (owner == null)
+                    {
+                        continue;
+                    }
+
                     var localMovie = new LocalMovie
                     {
                         FileMovieInfo = minimalInfo,
                         Movie = movie,
+                        ExtraFileMovieFile = owner,
                         Path = possibleSubtitleFile,
                         FileNameBeforeRename = fileNameBeforeRename
                     };
@@ -74,7 +84,7 @@ namespace NzbDrone.Core.Extras.Subtitles
                     var subtitleFile = new SubtitleFile
                     {
                         MovieId = movie.Id,
-                        MovieFileId = movie.MovieFileId,
+                        MovieFileId = owner.Id,
                         RelativePath = movie.Path.GetRelativePath(possibleSubtitleFile),
                         Language = localMovie.SubtitleInfo.Language,
                         LanguageTags = localMovie.SubtitleInfo.LanguageTags,

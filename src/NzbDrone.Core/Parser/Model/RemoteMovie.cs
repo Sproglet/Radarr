@@ -2,7 +2,9 @@ using System.Collections.Generic;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Languages;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Movies;
+using NzbDrone.Core.Profiles.Qualities;
 
 namespace NzbDrone.Core.Parser.Model
 {
@@ -14,6 +16,9 @@ namespace NzbDrone.Core.Parser.Model
         public int CustomFormatScore { get; set; }
         public MovieMatchType MovieMatchType { get; set; }
         public Movie Movie { get; set; }
+        public MovieEditionContext EditionContext { get; set; }
+        public QualityProfile EffectiveQualityProfile => EditionContext != null ? EditionContext.QualityProfile : Movie?.QualityProfile;
+        public MovieFile CurrentFile => EditionContext != null ? EditionContext.CurrentFile : Movie?.MovieFile;
         public bool MovieRequested { get; set; }
         public bool DownloadAllowed { get; set; }
         public TorrentSeedConfiguration SeedConfiguration { get; set; }

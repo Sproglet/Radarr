@@ -14,6 +14,7 @@ namespace NzbDrone.Core.MediaFiles
     {
         public int MovieId { get; set; }
         public int? MovieEditionId { get; set; }
+        public MovieEditionContext EditionContext { get; set; }
         public string RelativePath { get; set; }
         public string Path { get; set; }
         public long Size { get; set; }

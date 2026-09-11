@@ -142,7 +142,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport
                     }
 
                     localMovie.CustomFormats = _formatCalculator.ParseCustomFormat(localMovie);
-                    localMovie.CustomFormatScore = localMovie.Movie.QualityProfile?.CalculateCustomFormatScore(localMovie.CustomFormats) ?? 0;
+                    localMovie.CustomFormatScore = localMovie.EffectiveQualityProfile?.CalculateCustomFormatScore(localMovie.CustomFormats) ?? 0;
 
                     decision = GetDecision(localMovie, downloadClientItem);
                 }

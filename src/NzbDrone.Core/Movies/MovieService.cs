@@ -438,26 +438,29 @@ namespace NzbDrone.Core.Movies
 
         public void Handle(MovieFileAddedEvent message)
         {
-            var movie = message.MovieFile.Movie;
-            movie.MovieFileId = message.MovieFile.Id;
-            _movieRepository.Update(movie);
+            // File insertion commits ownership and the primary projection before publishing this event.
+            if (message.MovieFile.Movie.PrimaryEditionId == message.MovieFile.MovieEditionId)
+            {
+                message.MovieFile.Movie.MovieFileId = message.MovieFile.Id;
+                message.MovieFile.Movie.MovieFile = message.MovieFile;
+            }
 
-            // _movieRepository.SetFileId(message.MovieFile.Id, message.MovieFile.Movie.Value.Id);
             _logger.Info("Assigning file [{0}] to movie [{1}]", message.MovieFile.RelativePath, message.MovieFile.Movie);
         }
 
         public void Handle(MovieFileDeletedEvent message)
         {
-            foreach (var movie in GetMoviesByFileId(message.MovieFile.Id))
+            if (message.MovieFile.Movie.MovieFileId != message.MovieFile.Id)
             {
-                _logger.Debug("Detaching movie {0} from file.", movie.Id);
-                movie.MovieFileId = 0;
+                return;
+            }
 
-                if (message.Reason != DeleteMediaFileReason.Upgrade && _configService.AutoUnmonitorPreviouslyDownloadedMovies)
-                {
-                    movie.Monitored = false;
-                }
-
+            // The repository has already cleared both pointers. Reload to avoid replaying stale settings.
+            var movie = _movieRepository.Find(message.MovieFile.MovieId);
+            if (movie != null && !movie.HasFile && message.Reason != DeleteMediaFileReason.Upgrade &&
+                _configService.AutoUnmonitorPreviouslyDownloadedMovies)
+            {
+                movie.Monitored = false;
                 UpdateMovie(movie);
             }
         }

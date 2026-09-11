@@ -30,6 +30,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IEventAggregator _eventAggregator;
         private readonly IBuildFileNames _filenameBuilder;
         private readonly IDiskProvider _diskProvider;
+        private readonly IEditionFilePathGuard _paths;
         private readonly Logger _logger;
 
         public RenameMovieFileService(IMovieService movieService,
@@ -38,6 +39,7 @@ namespace NzbDrone.Core.MediaFiles
                                       IEventAggregator eventAggregator,
                                       IBuildFileNames filenameBuilder,
                                       IDiskProvider diskProvider,
+                                      IEditionFilePathGuard paths,
                                       Logger logger)
         {
             _movieService = movieService;
@@ -46,6 +48,7 @@ namespace NzbDrone.Core.MediaFiles
             _eventAggregator = eventAggregator;
             _filenameBuilder = filenameBuilder;
             _diskProvider = diskProvider;
+            _paths = paths;
             _logger = logger;
         }
 
@@ -65,6 +68,7 @@ namespace NzbDrone.Core.MediaFiles
 
         private IEnumerable<RenameMovieFilePreview> GetPreviews(Movie movie, List<MovieFile> files)
         {
+            ValidateDestinations(movie, files);
             foreach (var file in files)
             {
                 var movieFilePath = Path.Combine(movie.Path, file.RelativePath);
@@ -88,6 +92,8 @@ namespace NzbDrone.Core.MediaFiles
 
         private List<RenamedMovieFile> RenameFiles(List<MovieFile> movieFiles, Movie movie)
         {
+            using var operation = MovieFileOperationLock.Acquire(movie.Id);
+            ValidateDestinations(movie, movieFiles);
             var renamed = new List<RenamedMovieFile>();
 
             foreach (var movieFile in movieFiles)
@@ -135,6 +141,28 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             return renamed;
+        }
+
+        private void ValidateDestinations(Movie movie, List<MovieFile> files)
+        {
+            var destinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in files)
+            {
+                if (file.MovieId != movie.Id)
+                {
+                    throw new InvalidOperationException("A selected file belongs to another movie.");
+                }
+
+                var current = Path.Combine(movie.Path, file.RelativePath);
+                var name = _filenameBuilder.BuildFileName(movie, file);
+                var destination = _filenameBuilder.BuildFilePath(movie, name, Path.GetExtension(current));
+                if (!destinations.Add(Path.ChangeExtension(destination, null)))
+                {
+                    throw new InvalidOperationException("Edition filenames collide. Include {Managed Edition} or choose a distinct naming format.");
+                }
+
+                _paths.Validate(movie, destination, file.Id, current);
+            }
         }
 
         public void Execute(RenameFilesCommand message)

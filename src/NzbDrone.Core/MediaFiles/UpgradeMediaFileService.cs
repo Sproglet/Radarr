@@ -1,9 +1,13 @@
+using System;
 using System.IO;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.MediaFiles.MovieImport;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Movies;
+using NzbDrone.Core.Organizer;
 
 namespace NzbDrone.Core.MediaFiles
 {
@@ -18,28 +22,64 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IMediaFileService _mediaFileService;
         private readonly IMoveMovieFiles _movieFileMover;
         private readonly IDiskProvider _diskProvider;
+        private readonly IMovieEditionContextService _editionContexts;
+        private readonly IBuildFileNames _fileNames;
+        private readonly IEditionFilePathGuard _paths;
+        private readonly IConfigService _config;
         private readonly Logger _logger;
 
         public UpgradeMediaFileService(IRecycleBinProvider recycleBinProvider,
                                        IMediaFileService mediaFileService,
                                        IMoveMovieFiles movieFileMover,
                                        IDiskProvider diskProvider,
+                                       IMovieEditionContextService editionContexts,
+                                       IBuildFileNames fileNames,
+                                       IEditionFilePathGuard paths,
+                                       IConfigService config,
                                        Logger logger)
         {
             _recycleBinProvider = recycleBinProvider;
             _mediaFileService = mediaFileService;
             _movieFileMover = movieFileMover;
             _diskProvider = diskProvider;
+            _editionContexts = editionContexts;
+            _fileNames = fileNames;
+            _paths = paths;
+            _config = config;
             _logger = logger;
         }
 
         public MovieFileMoveResult UpgradeMovieFile(MovieFile movieFile, LocalMovie localMovie, bool copyOnly = false)
         {
+            using var operation = MovieFileOperationLock.Acquire(localMovie.Movie.Id);
             _logger.Trace("Upgrading movie file.");
 
             var moveFileResult = new MovieFileMoveResult();
 
-            var existingFile = localMovie.Movie.MovieFileId > 0 ? localMovie.Movie.MovieFile : null;
+            var existingFile = localMovie.EditionContext != null ? localMovie.CurrentFile :
+                localMovie.Movie.MovieFileId > 0 ? localMovie.Movie.MovieFile : null;
+
+            if (localMovie.EditionContext != null)
+            {
+                _editionContexts.Validate(localMovie.Movie, localMovie.EditionContext);
+                _editionContexts.Resolve(localMovie.Movie, localMovie.EditionContext.Edition.Id, localMovie.Path);
+                if (localMovie.EditionContext.HasMultipleEditions && _config.UseScriptImport)
+                {
+                    throw new InvalidOperationException("Custom import scripts are disabled for multi-edition movies until edition-aware script recovery is supported.");
+                }
+                if (movieFile.MovieEditionId != localMovie.EditionContext.Edition.Id)
+                {
+                    throw new InvalidOperationException("The replacement file has no matching edition assignment.");
+                }
+
+                var name = _fileNames.BuildFileName(localMovie.Movie, movieFile, null, localMovie.CustomFormats);
+                var destination = _fileNames.BuildFilePath(localMovie.Movie, name, Path.GetExtension(localMovie.Path));
+                _paths.Validate(localMovie.Movie, destination, existingFile?.Id);
+                if (existingFile != null && Path.Combine(localMovie.Movie.Path, existingFile.RelativePath).PathEquals(localMovie.Path))
+                {
+                    throw new InvalidOperationException("The import source is the current file. Use existing-file reprocessing instead of upgrading it.");
+                }
+            }
 
             var rootFolder = _diskProvider.GetParentFolder(localMovie.Movie.Path);
 

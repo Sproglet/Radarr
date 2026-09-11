@@ -5,6 +5,7 @@ using NzbDrone.Core.Languages;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.MediaInfo;
 using NzbDrone.Core.Movies;
+using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
 
 namespace NzbDrone.Core.Parser.Model
@@ -23,6 +24,9 @@ namespace NzbDrone.Core.Parser.Model
         public DownloadClientItem DownloadItem { get; set; }
         public ParsedMovieInfo FolderMovieInfo { get; set; }
         public Movie Movie { get; set; }
+        public MovieEditionContext EditionContext { get; set; }
+        public QualityProfile EffectiveQualityProfile => EditionContext != null ? EditionContext.QualityProfile : Movie?.QualityProfile;
+        public MovieFile CurrentFile => EditionContext != null ? EditionContext.CurrentFile : Movie?.MovieFile;
         public List<DeletedMovieFile> OldFiles { get; set; }
         public QualityModel Quality { get; set; }
         public List<Language> Languages { get; set; }
@@ -42,6 +46,7 @@ namespace NzbDrone.Core.Parser.Model
         public bool ShouldImportExtras { get; set; }
         public List<string> PossibleExtraFiles { get; set; }
         public SubtitleTitleInfo SubtitleInfo { get; set; }
+        public MovieFile ExtraFileMovieFile { get; set; }
 
         public override string ToString()
         {

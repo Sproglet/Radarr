@@ -167,7 +167,9 @@ namespace NzbDrone.Core.Datastore
 
             using (var conn = _database.OpenConnection())
             {
-                model = Insert(conn, null, model);
+                using var tran = RequiresLifecycleTransaction ? conn.BeginTransaction(IsolationLevel.ReadCommitted) : null;
+                model = Insert(conn, tran, model);
+                tran?.Commit();
             }
 
             ModelCreated(model);
@@ -216,6 +218,7 @@ namespace NzbDrone.Core.Datastore
             var multiRead = multi.Read();
             var id = (int)(multiRead.First().id ?? multiRead.First().Id);
             _keyProperty.SetValue(model, id);
+            OnInserted(connection, transaction, model);
 
             return model;
         }
@@ -250,7 +253,9 @@ namespace NzbDrone.Core.Datastore
 
             using (var conn = _database.OpenConnection())
             {
-                UpdateFields(conn, null, model, _properties);
+                using var tran = RequiresLifecycleTransaction ? conn.BeginTransaction(IsolationLevel.ReadCommitted) : null;
+                UpdateFields(conn, tran, model, _properties);
+                tran?.Commit();
             }
 
             ModelUpdated(model);
@@ -284,7 +289,10 @@ namespace NzbDrone.Core.Datastore
 
             using (var conn = _database.OpenConnection())
             {
-                conn.Execute(sql.RawSql, sql.Parameters);
+                using var tran = RequiresLifecycleTransaction ? conn.BeginTransaction(IsolationLevel.ReadCommitted) : null;
+                conn.Execute(sql.RawSql, sql.Parameters, tran);
+                OnDeleted(conn, tran);
+                tran?.Commit();
             }
         }
 
@@ -327,7 +335,10 @@ namespace NzbDrone.Core.Datastore
         {
             using (var conn = _database.OpenConnection())
             {
-                conn.Execute($"DELETE FROM \"{_table}\"");
+                using var tran = RequiresLifecycleTransaction ? conn.BeginTransaction(IsolationLevel.ReadCommitted) : null;
+                conn.Execute($"DELETE FROM \"{_table}\"", transaction: tran);
+                OnDeleted(conn, tran);
+                tran?.Commit();
             }
 
             if (vacuum)
@@ -357,7 +368,9 @@ namespace NzbDrone.Core.Datastore
 
             using (var conn = _database.OpenConnection())
             {
-                UpdateFields(conn, null, model, propertiesToUpdate);
+                using var tran = RequiresLifecycleTransaction ? conn.BeginTransaction(IsolationLevel.ReadCommitted) : null;
+                UpdateFields(conn, tran, model, propertiesToUpdate);
+                tran?.Commit();
             }
 
             ModelUpdated(model);
@@ -407,6 +420,8 @@ namespace NzbDrone.Core.Datastore
 
         private void UpdateFields(IDbConnection connection, IDbTransaction transaction, TModel model, List<PropertyInfo> propertiesToUpdate)
         {
+            OnUpdating(connection, transaction, model, propertiesToUpdate.Select(p => p.Name).ToList());
+
             var sql = propertiesToUpdate == _properties ? _updateSql : GetUpdateSql(propertiesToUpdate);
 
             SqlBuilderExtensions.LogQuery(sql, model);
@@ -416,6 +431,16 @@ namespace NzbDrone.Core.Datastore
 
         private void UpdateFields(IDbConnection connection, IDbTransaction transaction, IList<TModel> models, List<PropertyInfo> propertiesToUpdate)
         {
+            if (RequiresLifecycleTransaction)
+            {
+                foreach (var model in models)
+                {
+                    UpdateFields(connection, transaction, model, propertiesToUpdate);
+                }
+
+                return;
+            }
+
             var sql = propertiesToUpdate == _properties ? _updateSql : GetUpdateSql(propertiesToUpdate);
 
             foreach (var model in models)
@@ -424,6 +449,21 @@ namespace NzbDrone.Core.Datastore
             }
 
             RetryStrategy.Execute(static (state, _) => state.connection.Execute(state.sql, state.models, transaction: state.transaction), (connection, sql, models, transaction));
+        }
+
+        // Derived repositories can maintain related rows before the write transaction commits.
+        protected virtual bool RequiresLifecycleTransaction => false;
+
+        protected virtual void OnInserted(IDbConnection connection, IDbTransaction transaction, TModel model)
+        {
+        }
+
+        protected virtual void OnUpdating(IDbConnection connection, IDbTransaction transaction, TModel model, List<string> properties)
+        {
+        }
+
+        protected virtual void OnDeleted(IDbConnection connection, IDbTransaction transaction)
+        {
         }
 
         protected virtual SqlBuilder PagedBuilder() => Builder();

@@ -217,6 +217,19 @@ namespace NzbDrone.Core.Extras.Metadata
             }
 
             var fullPath = Path.Combine(movie.Path, movieFileMetadata.RelativePath);
+            if (movieFile.MovieEditionId.HasValue && movieFile.MovieEditionId != movie.PrimaryEditionId &&
+                !ExtraFileOwnerResolver.Matches(Path.Combine(movie.Path, movieFile.RelativePath), fullPath))
+            {
+                // Movie-level metadata has one writer. Secondary editions require file-specific destinations.
+                return null;
+            }
+
+            if (_metadataFileService.GetFilesByMovie(movie.Id).Any(f => f.MovieFileId.HasValue && f.MovieFileId != movieFile.Id &&
+                Path.Combine(movie.Path, f.RelativePath).PathEquals(fullPath)))
+            {
+                _logger.Warn("Metadata destination {0} already belongs to another file. Configure distinct metadata filenames.", fullPath);
+                return null;
+            }
 
             _otherExtraFileRenamer.RenameOtherExtraFile(movie, fullPath);
 

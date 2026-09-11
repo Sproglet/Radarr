@@ -1,5 +1,6 @@
-using Dapper;
+using System.Data;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Movies;
 
 namespace NzbDrone.Core.Housekeeping.Housekeepers
 {
@@ -15,13 +16,9 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
         public void Clean()
         {
             using var mapper = _database.OpenConnection();
-            mapper.Execute(@"UPDATE ""Movies""
-                             SET ""MovieFileId"" = 0
-                             WHERE ""Id"" IN (
-                             SELECT ""Movies"".""Id"" FROM ""Movies""
-                             LEFT OUTER JOIN ""MovieFiles""
-                             ON ""Movies"".""MovieFileId"" = ""MovieFiles"".""Id""
-                             WHERE ""MovieFiles"".""Id"" IS NULL)");
+            using var transaction = mapper.BeginTransaction(IsolationLevel.ReadCommitted);
+            MovieEditionLifecycle.Repair(mapper, transaction);
+            transaction.Commit();
         }
     }
 }

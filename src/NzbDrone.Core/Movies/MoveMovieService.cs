@@ -3,6 +3,7 @@ using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies.Commands;
@@ -37,6 +38,7 @@ namespace NzbDrone.Core.Movies
 
         private void MoveSingleMovie(Movie movie, string sourcePath, string destinationPath, int? index = null, int? total = null)
         {
+            using var operation = MovieFileOperationLock.Acquire(movie.Id);
             if (!sourcePath.IsPathValid(PathValidationType.CurrentOs))
             {
                 _logger.Warn("Folder '{0}' for '{1}' is invalid, unable to move movie. Try moving files manually", sourcePath, movie.Title);

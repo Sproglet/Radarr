@@ -36,6 +36,7 @@ namespace NzbDrone.Core.Organizer
         private readonly IUpdateMediaInfo _mediaInfoUpdater;
         private readonly IMovieTranslationService _movieTranslationService;
         private readonly ICustomFormatCalculationService _formatCalculator;
+        private readonly IMovieEditionRepository _editions;
         private readonly Logger _logger;
 
         private static readonly Regex TitleRegex = new Regex(@"(?<tag>\{(?<prefix>[-{ ._\[(]*)(?:imdb(?:id)?-|edition-))?\{(?<prefix>[-{ ._\[(]*)(?<token>(?:[a-z0-9]+)(?:(?<separator>[- ._]+)(?:[a-z0-9]+))?)(?::(?<customFormat>[ ,a-z0-9|+-]+(?<![- ])))?(?<suffix>[-} ._)\]]*)\}",
@@ -92,6 +93,7 @@ namespace NzbDrone.Core.Organizer
                                IUpdateMediaInfo mediaInfoUpdater,
                                IMovieTranslationService movieTranslationService,
                                ICustomFormatCalculationService formatCalculator,
+                               IMovieEditionRepository editions,
                                Logger logger)
         {
             _namingConfigService = namingConfigService;
@@ -99,6 +101,7 @@ namespace NzbDrone.Core.Organizer
             _mediaInfoUpdater = mediaInfoUpdater;
             _movieTranslationService = movieTranslationService;
             _formatCalculator = formatCalculator;
+            _editions = editions;
             _logger = logger;
         }
 
@@ -133,6 +136,17 @@ namespace NzbDrone.Core.Organizer
             AddMediaInfoTokens(tokenHandlers, movieFile);
             AddMovieFileTokens(tokenHandlers, movieFile, multipleTokens);
             AddEditionTagsTokens(tokenHandlers, movieFile);
+            tokenHandlers["{Managed Edition}"] = token =>
+            {
+                var edition = movieFile.EditionContext?.Edition ??
+                    (movieFile.MovieEditionId.HasValue ? _editions.Get(movieFile.MovieEditionId.Value) : null);
+                if (edition != null && edition.MovieId != movie.Id)
+                {
+                    throw new NamingFormatException("The file's edition does not belong to the movie.");
+                }
+
+                return edition?.Name ?? string.Empty;
+            };
             AddCustomFormats(tokenHandlers, movie, movieFile, customFormats);
 
             var splitPatterns = pattern.Split(new char[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);

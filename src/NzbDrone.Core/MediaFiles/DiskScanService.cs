@@ -76,6 +76,7 @@ namespace NzbDrone.Core.MediaFiles
 
         public void Scan(Movie movie)
         {
+            using var operation = MovieFileOperationLock.Acquire(movie.Id);
             var rootFolder = _rootFolderService.GetBestRootFolderPath(movie.Path);
 
             var movieFolderExists = _diskProvider.FolderExists(movie.Path);

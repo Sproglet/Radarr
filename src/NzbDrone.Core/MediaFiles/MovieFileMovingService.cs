@@ -33,6 +33,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IRootFolderService _rootFolderService;
         private readonly IEventAggregator _eventAggregator;
         private readonly IConfigService _configService;
+        private readonly IEditionFilePathGuard _paths;
         private readonly Logger _logger;
 
         public MovieFileMovingService(IUpdateMovieFileService updateMovieFileService,
@@ -44,6 +45,7 @@ namespace NzbDrone.Core.MediaFiles
                                 IRootFolderService rootFolderService,
                                 IEventAggregator eventAggregator,
                                 IConfigService configService,
+                                IEditionFilePathGuard paths,
                                 Logger logger)
         {
             _updateMovieFileService = updateMovieFileService;
@@ -55,14 +57,17 @@ namespace NzbDrone.Core.MediaFiles
             _rootFolderService = rootFolderService;
             _eventAggregator = eventAggregator;
             _configService = configService;
+            _paths = paths;
             _logger = logger;
         }
 
         public MovieFile MoveMovieFile(MovieFile movieFile, Movie movie)
         {
+            using var operation = MovieFileOperationLock.Acquire(movie.Id);
             var newFileName = _buildFileNames.BuildFileName(movie, movieFile);
             var filePath = _buildFileNames.BuildFilePath(movie, newFileName, Path.GetExtension(movieFile.RelativePath));
 
+            _paths.Validate(movie, filePath, movieFile.Id, movieFile.Path ?? Path.Combine(movie.Path, movieFile.RelativePath));
             EnsureMovieFolder(movieFile, movie, filePath);
 
             _logger.Debug("Renaming movie file: {0} to {1}", movieFile, filePath);
@@ -75,6 +80,7 @@ namespace NzbDrone.Core.MediaFiles
             var newFileName = _buildFileNames.BuildFileName(localMovie.Movie, movieFile, null, localMovie.CustomFormats);
             var filePath = _buildFileNames.BuildFilePath(localMovie.Movie, newFileName, Path.GetExtension(localMovie.Path));
 
+            _paths.Validate(localMovie.Movie, filePath, movieFile.Id, localMovie.Path);
             EnsureMovieFolder(movieFile, localMovie, filePath);
 
             _logger.Debug("Moving movie file: {0} to {1}", movieFile.Path, filePath);
@@ -87,6 +93,7 @@ namespace NzbDrone.Core.MediaFiles
             var newFileName = _buildFileNames.BuildFileName(localMovie.Movie, movieFile, null, localMovie.CustomFormats);
             var filePath = _buildFileNames.BuildFilePath(localMovie.Movie, newFileName, Path.GetExtension(localMovie.Path));
 
+            _paths.Validate(localMovie.Movie, filePath, movieFile.Id, localMovie.Path);
             EnsureMovieFolder(movieFile, localMovie, filePath);
 
             if (_configService.CopyUsingHardlinks)

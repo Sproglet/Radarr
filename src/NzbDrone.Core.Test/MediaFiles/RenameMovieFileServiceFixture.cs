@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using FizzWare.NBuilder;
 using Moq;
@@ -8,6 +9,7 @@ using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
+using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Test.Framework;
 
 namespace NzbDrone.Core.Test.MediaFiles
@@ -28,6 +30,13 @@ namespace NzbDrone.Core.Test.MediaFiles
                                                 .With(e => e.MovieId = _movie.Id)
                                                 .Build()
                                                 .ToList();
+
+            Mocker.GetMock<IBuildFileNames>()
+                .Setup(b => b.BuildFileName(It.IsAny<Movie>(), It.IsAny<MovieFile>(), null, null))
+                .Returns<Movie, MovieFile, NamingConfig, List<NzbDrone.Core.CustomFormats.CustomFormat>>((m, f, n, c) => "Synthetic " + f.Id);
+            Mocker.GetMock<IBuildFileNames>()
+                .Setup(b => b.BuildFilePath(It.IsAny<Movie>(), It.IsAny<string>(), It.IsAny<string>()))
+                .Returns<Movie, string, string>((m, name, ext) => Path.Combine(m.Path, name + ext));
 
             Mocker.GetMock<IMovieService>()
                   .Setup(s => s.GetMovie(_movie.Id))

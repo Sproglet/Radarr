@@ -13,15 +13,18 @@ namespace NzbDrone.Core.Extras.Others
     {
         private readonly IExtraFileService<OtherExtraFile> _otherExtraFileService;
         private readonly IParsingService _parsingService;
+        private readonly IExtraFileOwnerResolver _owners;
         private readonly Logger _logger;
 
         public ExistingOtherExtraImporter(IExtraFileService<OtherExtraFile> otherExtraFileService,
                                           IParsingService parsingService,
+                                          IExtraFileOwnerResolver owners,
                                           Logger logger)
             : base(otherExtraFileService)
         {
             _otherExtraFileService = otherExtraFileService;
             _parsingService = parsingService;
+            _owners = owners;
             _logger = logger;
         }
 
@@ -52,10 +55,16 @@ namespace NzbDrone.Core.Extras.Others
                     continue;
                 }
 
+                var owner = _owners.Resolve(movie, possibleExtraFile, fileNameBeforeRename);
+                if (owner == null)
+                {
+                    continue;
+                }
+
                 var extraFile = new OtherExtraFile
                 {
                     MovieId = movie.Id,
-                    MovieFileId = movie.MovieFileId,
+                    MovieFileId = owner.Id,
                     RelativePath = movie.Path.GetRelativePath(possibleExtraFile),
                     Extension = extension
                 };

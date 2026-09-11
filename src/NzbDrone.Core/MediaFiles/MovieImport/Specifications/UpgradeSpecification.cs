@@ -26,12 +26,12 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Specifications
         public ImportSpecDecision IsSatisfiedBy(LocalMovie localMovie, DownloadClientItem downloadClientItem)
         {
             var downloadPropersAndRepacks = _configService.DownloadPropersAndRepacks;
-            var qualityProfile = localMovie.Movie.QualityProfile;
+            var qualityProfile = localMovie.EffectiveQualityProfile;
             var qualityComparer = new QualityModelComparer(qualityProfile);
 
-            if (localMovie.Movie.MovieFileId > 0)
+            if (localMovie.EditionContext != null ? localMovie.CurrentFile != null : localMovie.Movie.MovieFileId > 0)
             {
-                var movieFile = localMovie.Movie.MovieFile;
+                var movieFile = localMovie.CurrentFile;
 
                 if (movieFile == null)
                 {

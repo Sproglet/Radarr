@@ -11,6 +11,7 @@ using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Movies;
 using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Download
@@ -29,6 +30,7 @@ namespace NzbDrone.Core.Download
         private readonly IRateLimitService _rateLimitService;
         private readonly IEventAggregator _eventAggregator;
         private readonly ISeedConfigProvider _seedConfigProvider;
+        private readonly IMovieEditionRepository _editions;
         private readonly Logger _logger;
 
         public DownloadService(IProvideDownloadClient downloadClientProvider,
@@ -38,6 +40,7 @@ namespace NzbDrone.Core.Download
                                IRateLimitService rateLimitService,
                                IEventAggregator eventAggregator,
                                ISeedConfigProvider seedConfigProvider,
+                               IMovieEditionRepository editions,
                                Logger logger)
         {
             _downloadClientProvider = downloadClientProvider;
@@ -47,11 +50,17 @@ namespace NzbDrone.Core.Download
             _rateLimitService = rateLimitService;
             _eventAggregator = eventAggregator;
             _seedConfigProvider = seedConfigProvider;
+            _editions = editions;
             _logger = logger;
         }
 
         public async Task DownloadReport(RemoteMovie remoteMovie, int? downloadClientId)
         {
+            if (remoteMovie.EditionContext != null || (remoteMovie.Movie != null && _editions.GetByMovie(remoteMovie.Movie.Id)?.Count > 1))
+            {
+                throw new InvalidOperationException("Multi-edition acquisition is disabled. Import files with explicit edition assignments instead.");
+            }
+
             var filterBlockedClients = remoteMovie.Release.PendingReleaseReason == PendingReleaseReason.DownloadClientUnavailable;
 
             var tags = remoteMovie.Movie?.Tags;

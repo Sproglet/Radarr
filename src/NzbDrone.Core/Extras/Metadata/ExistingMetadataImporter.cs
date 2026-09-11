@@ -14,17 +14,20 @@ namespace NzbDrone.Core.Extras.Metadata
     {
         private readonly IExtraFileService<MetadataFile> _metadataFileService;
         private readonly IParsingService _parsingService;
+        private readonly IExtraFileOwnerResolver _owners;
         private readonly Logger _logger;
         private readonly List<IMetadata> _consumers;
 
         public ExistingMetadataImporter(IExtraFileService<MetadataFile> metadataFileService,
                                         IEnumerable<IMetadata> consumers,
                                         IParsingService parsingService,
+                                        IExtraFileOwnerResolver owners,
                                         Logger logger)
         : base(metadataFileService)
         {
             _metadataFileService = metadataFileService;
             _parsingService = parsingService;
+            _owners = owners;
             _logger = logger;
             _consumers = consumers.ToList();
         }
@@ -67,7 +70,16 @@ namespace NzbDrone.Core.Extras.Metadata
                             continue;
                         }
 
-                        metadata.MovieFileId = movie.MovieFileId;
+                        var owner = _owners.Resolve(movie, possibleMetadataFile, fileNameBeforeRename);
+                        if (owner == null)
+                        {
+                            // Shared artwork and movie.nfo remain movie-level; do not attach them to an arbitrary edition.
+                            metadata.MovieFileId = null;
+                        }
+                        else
+                        {
+                            metadata.MovieFileId = owner.Id;
+                        }
                     }
 
                     metadata.Extension = Path.GetExtension(possibleMetadataFile);

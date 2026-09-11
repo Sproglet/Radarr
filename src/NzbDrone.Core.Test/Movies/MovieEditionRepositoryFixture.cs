@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using FizzWare.NBuilder;
 using FluentAssertions;
 using NUnit.Framework;
@@ -9,7 +12,7 @@ using NzbDrone.Core.Movies;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Test.Framework;
 
-namespace NzbDrone.Core.Test.Movies
+namespace NzbDrone.Core.Test.MovieTests
 {
     [TestFixture]
     public class MovieEditionRepositoryFixture : DbTest<MovieEditionRepository, MovieEdition>
@@ -122,6 +125,81 @@ namespace NzbDrone.Core.Test.Movies
 
             act.Should().Throw<InvalidOperationException>();
             Db.All<MovieFile>().Should().ContainSingle().Which.MovieEditionId.Should().BeNull();
+        }
+
+        [Test]
+        public void should_reject_deleting_primary_or_file_owning_editions()
+        {
+            Action primary = () => Subject.Delete(_primary.Id);
+            primary.Should().Throw<InvalidOperationException>();
+            Subject.Get(_primary.Id).Should().NotBeNull();
+
+            var secondary = AddEdition("synthetic-extended");
+            var file = AddFile();
+            Subject.SetCurrentFile(_movie.Id, secondary.Id, file.Id, null);
+            Action owned = () => Subject.DeleteMany(new[] { secondary.Id });
+            owned.Should().Throw<InvalidOperationException>();
+            Subject.Get(secondary.Id).MovieFileId.Should().Be(file.Id);
+        }
+
+        [Test]
+        public void should_delete_empty_non_primary_edition()
+        {
+            var secondary = AddEdition("synthetic-empty");
+            Subject.Delete(secondary.Id);
+            Subject.GetByMovie(_movie.Id).Should().ContainSingle().Which.Id.Should().Be(_primary.Id);
+        }
+
+        [Test]
+        public void should_allow_only_one_concurrent_assignment_with_the_same_expected_file()
+        {
+            var files = new[] { AddFile(), AddFile() };
+            var repository = Subject;
+            using var start = new ManualResetEventSlim();
+            var tasks = files.Select(file => Task.Run(() =>
+            {
+                start.Wait();
+                try
+                {
+                    repository.SetCurrentFile(_movie.Id, _primary.Id, file.Id, null);
+                    return true;
+                }
+                catch (InvalidOperationException)
+                {
+                    return false;
+                }
+            })).ToArray();
+            start.Set();
+            Task.WhenAll(tasks).GetAwaiter().GetResult().Count(success => success).Should().Be(1);
+
+            var current = Subject.Get(_primary.Id).MovieFileId;
+            Db.All<Movie>().Single().MovieFileId.Should().Be(current.Value);
+            Db.All<MovieFile>().Single(f => f.Id != current).MovieEditionId.Should().BeNull();
+        }
+
+        [Test]
+        public void should_keep_projection_consistent_when_primary_switch_races_with_assignment()
+        {
+            var secondary = AddEdition("synthetic-extended");
+            var file = AddFile();
+            var repository = Subject;
+            using var start = new ManualResetEventSlim();
+            var assign = Task.Run(() =>
+            {
+                start.Wait();
+                repository.SetCurrentFile(_movie.Id, secondary.Id, file.Id, null);
+            });
+            var select = Task.Run(() =>
+            {
+                start.Wait();
+                repository.SetPrimaryEdition(_movie.Id, secondary.Id);
+            });
+            start.Set();
+            Task.WhenAll(assign, select).GetAwaiter().GetResult();
+
+            Db.Single<Movie>().PrimaryEditionId.Should().Be(secondary.Id);
+            Db.Single<Movie>().MovieFileId.Should().Be(file.Id);
+            Subject.Get(secondary.Id).MovieFileId.Should().Be(file.Id);
         }
 
         [Test]
