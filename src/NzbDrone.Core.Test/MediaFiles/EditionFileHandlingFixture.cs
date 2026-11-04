@@ -51,7 +51,7 @@ namespace NzbDrone.Core.Test.MediaFiles
         {
             _recycled.Clear();
             Mocker.GetMock<ICustomFormatService>().Setup(s => s.All()).Returns(new List<CustomFormat>());
-            Mocker.GetMock<ICustomFormatCalculationService>().Setup(s => s.ParseCustomFormat(It.IsAny<LocalMovie>())).Returns(new List<CustomFormat>());
+            Mocker.GetMock<ICustomFormatCalculationService>().Setup(s => s.ParseCustomFormat(It.IsAny<LocalMovie>(), It.IsAny<string>())).Returns(new List<CustomFormat>());
             Mocker.GetMock<ICustomFormatCalculationService>().Setup(s => s.ParseCustomFormat(It.IsAny<MovieFile>(), It.IsAny<Movie>())).Returns(new List<CustomFormat>());
             Mocker.GetMock<ICustomFormatCalculationService>().Setup(s => s.ParseCustomFormat(It.IsAny<MovieFile>())).Returns(new List<CustomFormat>());
             Mocker.SetConstant<IQualityProfileRepository>(Mocker.Resolve<QualityProfileRepository>());
@@ -135,6 +135,7 @@ namespace NzbDrone.Core.Test.MediaFiles
             Mocker.GetMock<INamingConfigService>().Setup(s => s.GetConfig()).Returns(_naming);
             Mocker.GetMock<IQualityDefinitionService>().Setup(s => s.Get(It.IsAny<Quality>())).Returns<Quality>(q => Quality.DefaultQualityDefinitions.First(d => d.Quality == q));
             Mocker.SetConstant<IBuildFileNames>(Mocker.Resolve<FileNameBuilder>());
+            Mocker.SetConstant<ILocalMovieCustomFormatCalculationService>(Mocker.Resolve<LocalMovieCustomFormatCalculationService>());
             Mocker.SetConstant<IEditionFilePathGuard>(Mocker.Resolve<EditionFilePathGuard>());
             Mocker.SetConstant<IMoveMovieFiles>(Mocker.Resolve<MovieFileMovingService>());
             Mocker.SetConstant<IUpgradeMediaFiles>(Mocker.Resolve<UpgradeMediaFileService>());
@@ -232,7 +233,7 @@ namespace NzbDrone.Core.Test.MediaFiles
             var path = Path.Combine(_movie.Path, other.RelativePath);
             var local = new LocalMovie { Movie = _movies.Get(_movie.Id), Path = path, EditionContext = _contexts.Resolve(_movie, _directors.Id), Quality = new QualityModel(Quality.Bluray1080p) };
             var result = _importer.Import(new List<ImportDecision> { new ImportDecision(local) }, true, null, ImportMode.Move);
-            result.Single().Errors.Single().Should().Contain("source file already belongs");
+            string.Join(" ", result.Single().Errors).Should().Contain("source file already belongs");
             File.ReadAllText(path).Should().Be("SyntheticImax");
             Db.Single<MovieFile>().Id.Should().Be(other.Id);
             _recycled.Should().BeEmpty();
@@ -247,7 +248,7 @@ namespace NzbDrone.Core.Test.MediaFiles
             var current = Db.Single<MovieFile>();
             var local = new LocalMovie { Movie = _movies.Get(_movie.Id), Path = Source("SyntheticStale"), EditionContext = stale, Quality = new QualityModel(Quality.Bluray1080p) };
             var result = _importer.Import(new List<ImportDecision> { new ImportDecision(local) }, true, null, ImportMode.Copy);
-            result.Single().Errors.Single().Should().Contain("changed");
+            string.Join(" ", result.Single().Errors).Should().Contain("changed");
             _recycled.Should().BeEmpty();
             Db.Single<MovieFile>().Id.Should().Be(current.Id);
             ExceptionVerification.ExpectedWarns(1);
@@ -280,7 +281,7 @@ namespace NzbDrone.Core.Test.MediaFiles
             File.Exists(Path.Combine(_movie.Path, otherSubtitle.RelativePath)).Should().BeTrue();
             File.Exists(local.Path).Should().BeTrue();
             Directory.GetFiles(Path.Combine(TempFolder, "recycle")).Should().HaveCount(2);
-            result.Single().Errors.Single().Should().Contain("Synthetic transfer failure");
+            string.Join(" ", result.Single().Errors).Should().Contain("Synthetic transfer failure");
             if (afterCopy)
             {
                 var transferred = Path.Combine(_movie.Path, "Synthetic Lunar Voyage [Theatrical IMAX].mkv");
@@ -318,7 +319,7 @@ namespace NzbDrone.Core.Test.MediaFiles
             Mocker.GetMock<IConfigService>().SetupGet(c => c.UseScriptImport).Returns(true);
             var local = new LocalMovie { Movie = _movie, Path = Source("SyntheticScript"), EditionContext = _contexts.Resolve(_movie, _directors.Id), Quality = new QualityModel(Quality.Bluray1080p) };
             var result = _importer.Import(new List<ImportDecision> { new ImportDecision(local) }, true, null, ImportMode.Copy);
-            result.Single().Errors.Single().Should().Contain("scripts are disabled");
+            string.Join(" ", result.Single().Errors).Should().Contain("scripts are disabled");
             _recycled.Should().BeEmpty();
             Db.All<MovieFile>().Should().BeEmpty();
             ExceptionVerification.ExpectedWarns(1);
@@ -347,7 +348,7 @@ namespace NzbDrone.Core.Test.MediaFiles
             var local = new LocalMovie { Movie = _movies.Get(_movie.Id), Path = Source("SyntheticCollision"), EditionContext = _contexts.Resolve(_movie, _directors.Id), Quality = new QualityModel(Quality.Bluray1080p) };
             var result = _importer.Import(new List<ImportDecision> { new ImportDecision(local) }, true, null, ImportMode.Copy);
             result.Single().Result.Should().Be(ImportResultType.Skipped);
-            result.Single().Errors.Single().Should().Contain("another file");
+            string.Join(" ", result.Single().Errors).Should().Contain("another file");
             _recycled.Should().BeEmpty();
             Db.Single<MovieFile>().Id.Should().Be(existing.Id);
             ExceptionVerification.ExpectedWarns(1);
@@ -365,7 +366,7 @@ namespace NzbDrone.Core.Test.MediaFiles
             var result = _importer.Import(new List<ImportDecision> { new ImportDecision(local) }, false);
 
             result.Single().Result.Should().Be(ImportResultType.Skipped);
-            result.Single().Errors.Single().Should().Contain("another file");
+            string.Join(" ", result.Single().Errors).Should().Contain("another file");
             Db.Single<MovieFile>().Id.Should().Be(existing.Id);
             File.ReadAllText(path).Should().Be("Synthetic conflicting existing file");
             _recycled.Should().BeEmpty();
@@ -392,7 +393,7 @@ namespace NzbDrone.Core.Test.MediaFiles
             var result = _importer.Import(new List<ImportDecision> { new ImportDecision(local) }, true, null, ImportMode.Copy);
 
             result.Single().Result.Should().Be(ImportResultType.Skipped);
-            result.Single().Errors.Single().Should().Contain("basename");
+            string.Join(" ", result.Single().Errors).Should().Contain("basename");
             Db.All<MovieFile>().Select(f => f.Id).Should().BeEquivalentTo(before.Select(f => f.Id));
             File.ReadAllText(conflict).Should().Be("Synthetic unassigned video");
             _recycled.Should().BeEmpty();

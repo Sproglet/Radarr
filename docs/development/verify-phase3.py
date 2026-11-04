@@ -1,6 +1,6 @@
 """Run inside the disposable SDK container, with external networking disabled.
 
-Requires a built /src/_output/net8.0 application, Python 3, ffmpeg and ffprobe.
+Requires a built /src/_output/net10.0 application, Python 3, ffmpeg and ffprobe.
 Seeds synthetic movie/edition definitions while Radarr is stopped (edition CRUD
 is a later phase); all file handling is exercised through the running API.
 """
@@ -17,7 +17,7 @@ import time
 import urllib.request
 
 
-APP = Path("/src/_output/net8.0")
+APP = Path("/src/_output/net10.0")
 RESULTS = Path("/src/_temp/edition-test-results")
 KEY = "11112222333344445555666677778888"
 ROOT = Path(tempfile.mkdtemp(prefix="radarr-phase3-", dir="/tmp"))

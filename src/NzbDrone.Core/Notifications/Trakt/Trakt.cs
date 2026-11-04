@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net;
 using FluentValidation.Results;
 using NLog;
@@ -252,7 +253,7 @@ namespace NzbDrone.Core.Notifications.Trakt
 
         private string MapAudio(MovieFile movieFile)
         {
-            var audioCodec = movieFile.MediaInfo != null ? MediaInfoFormatter.FormatAudioCodec(movieFile.MediaInfo, movieFile.SceneName) : string.Empty;
+            var audioCodec = movieFile.MediaInfo is { PrimaryAudioStream: not null } ? MediaInfoFormatter.FormatAudioCodec(movieFile.MediaInfo.PrimaryAudioStream, movieFile.SceneName) : string.Empty;
 
             var traktAudioFormat = audioCodec switch
             {
@@ -282,14 +283,14 @@ namespace NzbDrone.Core.Notifications.Trakt
 
         private string MapAudioChannels(MovieFile movieFile)
         {
-            var audioChannels = movieFile.MediaInfo != null ? MediaInfoFormatter.FormatAudioChannels(movieFile.MediaInfo).ToString("0.0") : string.Empty;
-
-            if (audioChannels == "0.0")
+            if (movieFile.MediaInfo is not { PrimaryAudioStream: not null })
             {
-                audioChannels = string.Empty;
+                return string.Empty;
             }
 
-            return audioChannels;
+            var audioChannels = MediaInfoFormatter.FormatAudioChannels(movieFile.MediaInfo.PrimaryAudioStream);
+
+            return audioChannels == 0 ? string.Empty : audioChannels.ToString("0.0", CultureInfo.InvariantCulture);
         }
     }
 }

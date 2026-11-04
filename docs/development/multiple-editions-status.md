@@ -1,6 +1,6 @@
 # Multiple editions — lifecycle and acquisition groundwork
 
-Date: 4 November 2026 (verification completed 3 November)
+Date: 4 November 2026 (latest verification; earlier reports retained)
 
 Branch: `Multiple-Editions`, continued from `855e517b3`. On resuming, the working tree was clean and the Phase 2/3 implementation was already recorded in existing commit `1ed83ece1`. This checkpoint records the November collision, classification, gated search/policy and download-identity groundwork. Acquisition remains disabled. Remote integration is recorded below; older push-status notes describe the earlier checkpoints.
 
@@ -95,6 +95,24 @@ The newer PostgreSQL identity mode exposed two compatibility issues during verif
 
 Final merged-branch verification under SDK 10.0.402: **483 passed, 1 existing skip, 0 failed on each of SQLite and PostgreSQL 16** using the identity/lifecycle regression selection recorded above. The Linux application/API Release build passed with zero warnings/errors. Flags remain `EnableAnalyzers=false`, `NuGetAudit=false`, `RuntimeIdentifiers=linux-x64`; this is not an analyzer/security-audit or full UI/recovery gate. Artifacts: `_temp/edition-test-results/edition-merge-sqlite.trx`, `edition-merge-postgres.trx`, matching logs and `edition-merge-build.log`. Acquisition remains disabled. Disposable containers/network were removed after verification. The merge retains both branch histories and permits a normal fast-forward push without rewriting the remote.
 
+
+## Official develop integration (4 November 2026)
+
+Integrated official `Radarr/Radarr:develop` through `2f64b5cf6c4e183d395dc889b4bb0e2dc209c1c2`, incorporating the 54 upstream-only commits while preserving the edition branch’s seven existing commits. Import conflicts are reconciled: upstream renamed-filename scoring and diagnostics are retained alongside managed edition ownership and effective profiles. `LocalMovie.ToMovieFile()` carries edition ownership/context, and both original-name and renamed-name scoring use the selected edition profile. Acquisition remains disabled.
+
+### Migration compatibility
+
+- Upstream owns migration **243**, `mediainfo_multiple_streams`. Download identity remains **244**. Edition storage now uses **245**, `add_movie_editions`.
+- Migration 245 detects an existing `MovieEditions` table from older feature builds. It preserves its records, names, attributes, revisions, primary/file links and applied-version history, and reuses upstream’s idempotent media-info conversion to cover databases whose old feature migration occupied version 243. It does not recreate editions or rewrite `VersionInfo` entries.
+- Fresh and upstream databases run upstream’s migration 243 normally, then receive download identity and edition storage. Tests exercise old feature databases with only the old 243, old feature databases through 244, and upstream databases through upstream 243. No database reset or assumption that the branch was never used is required for these valid histories. Partially corrupted or manually modified schemas are not an established upgrade path.
+
+### Final verification
+
+- SDK **10.0.403**: core tests, Linux application/API and the separate Linux platform assembly build in Release with **zero warnings/errors**. Flags: `EnableAnalyzers=false`, `NuGetAudit=false`, `RuntimeIdentifiers=linux-x64`. This does not establish an analyzer/security-audit gate.
+- Expanded disposable SQLite and PostgreSQL 16 regressions: **1,072 passed, 4 existing skips, 0 failed on each backend**. Coverage includes migration compatibility/media streams, repositories, import/manual import, renamed-name scoring, classification, decision policies, naming, extras, housekeeping, pending/history and tracked-download regressions. The earlier focused migration selection also passed all 14 cases on SQLite; those cases are included in the final backend runs.
+- Offline real-process SQLite application/API smoke test passes on the new build: generated Theatrical / IMAX and Director’s Cut / 3D videos/subtitles, scan, rename, housekeeping, both independent upgrades, and two process restarts. Assertions preserve the untouched edition’s bytes and database IDs and verify combined attributes and the primary API projection. The first attempt identified the missing separately built Linux assembly; after building it, the complete application passes. The smoke script now targets `_output/net10.0`.
+- Artifacts: `_temp/edition-test-results/edition-upstream-final-sqlite.trx`, `edition-upstream-final-postgres.trx`, matching logs, `edition-upstream-final-build.log`, `edition-upstream-platform-build.log`, `edition-upstream-runtime-results.log` and `phase3-runtime.log`. The script removed its temporary configuration/library; disposable containers and test network were removed after verification. No production database, configuration, media or download client was used.
+- `git diff --check` passes. Frontend rendering/build and full live queue/completed-download recovery remain unverified/incomplete. The upstream merge is published only as disabled-acquisition groundwork, preserving both Git histories without a forced push.
 
 ---
 

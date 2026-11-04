@@ -40,6 +40,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
         private readonly ITrackedDownloadService _trackedDownloadService;
         private readonly IDownloadedMovieImportService _downloadedMovieImportService;
         private readonly IMediaFileService _mediaFileService;
+        private readonly ILocalMovieCustomFormatCalculationService _localMovieFormatCalculator;
         private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly IEventAggregator _eventAggregator;
         private readonly IMovieEditionContextService _editionContexts;
@@ -55,6 +56,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
                                    ITrackedDownloadService trackedDownloadService,
                                    IDownloadedMovieImportService downloadedMovieImportService,
                                    IMediaFileService mediaFileService,
+                                   ILocalMovieCustomFormatCalculationService localMovieFormatCalculator,
                                    ICustomFormatCalculationService formatCalculator,
                                    IEventAggregator eventAggregator,
                                    IMovieEditionContextService editionContexts,
@@ -70,6 +72,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
             _trackedDownloadService = trackedDownloadService;
             _downloadedMovieImportService = downloadedMovieImportService;
             _mediaFileService = mediaFileService;
+            _localMovieFormatCalculator = localMovieFormatCalculator;
             _formatCalculator = formatCalculator;
             _eventAggregator = eventAggregator;
             _editionContexts = editionContexts;
@@ -184,8 +187,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
                 return MapItem(new ImportDecision(localMovie, new ImportRejection(ImportRejectionReason.InvalidMovie, ex.Message)), rootFolder, downloadId, null);
             }
 
-            localMovie.CustomFormats = _formatCalculator.ParseCustomFormat(localMovie);
-            localMovie.CustomFormatScore = localMovie.EffectiveQualityProfile?.CalculateCustomFormatScore(localMovie.CustomFormats) ?? 0;
+            _localMovieFormatCalculator.UpdateMovieCustomFormats(localMovie);
 
             // Augment movie file so imported files have all additional information an automatic import would
             localMovie = _aggregationService.Augment(localMovie, downloadClientItem);
@@ -392,7 +394,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
             {
                 item.Movie = decision.LocalMovie.Movie;
 
-                item.CustomFormats = _formatCalculator.ParseCustomFormat(decision.LocalMovie);
+                item.CustomFormats = _localMovieFormatCalculator.ParseMovieCustomFormats(decision.LocalMovie);
                 item.CustomFormatScore = decision.LocalMovie.EffectiveQualityProfile?.CalculateCustomFormatScore(item.CustomFormats) ?? 0;
                 item.MovieEditionId = decision.LocalMovie.EditionContext?.Edition.Id;
             }
@@ -496,8 +498,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
                     localMovie.Languages = file.Languages;
                 }
 
-                localMovie.CustomFormats = _formatCalculator.ParseCustomFormat(localMovie);
-                localMovie.CustomFormatScore = localMovie.EffectiveQualityProfile?.CalculateCustomFormatScore(localMovie.CustomFormats) ?? 0;
+                _localMovieFormatCalculator.UpdateMovieCustomFormats(localMovie);
 
                 // TODO: Cleanup non-tracked downloads
                 var importDecision = new ImportDecision(localMovie);
