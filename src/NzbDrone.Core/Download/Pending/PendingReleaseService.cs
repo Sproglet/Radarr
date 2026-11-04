@@ -355,6 +355,8 @@ namespace NzbDrone.Core.Download.Pending
             var release = new PendingRelease
             {
                 MovieId = decision.RemoteMovie.Movie.Id,
+                MovieEditionId = decision.RemoteMovie.EditionContext?.Edition.Id,
+                EditionRuleRevision = decision.RemoteMovie.EditionContext?.Edition.RuleRevision,
                 ParsedMovieInfo = decision.RemoteMovie.ParsedMovieInfo,
                 Release = decision.RemoteMovie.Release,
                 Title = decision.RemoteMovie.Release.Title,
@@ -362,6 +364,7 @@ namespace NzbDrone.Core.Download.Pending
                 Reason = reason,
                 AdditionalInfo = new PendingReleaseAdditionalInfo
                 {
+                    EditionName = decision.RemoteMovie.EditionContext?.Edition.Name,
                     MovieMatchType = decision.RemoteMovie.MovieMatchType,
                     ReleaseSource = decision.RemoteMovie.ReleaseSource
                 }

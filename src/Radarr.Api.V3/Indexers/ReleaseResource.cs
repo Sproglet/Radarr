@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Languages;
+using NzbDrone.Core.Movies;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 using Radarr.Api.V3.CustomFormats;
@@ -49,6 +50,9 @@ namespace Radarr.Api.V3.Indexers
         public bool DownloadAllowed { get; set; }
         public int ReleaseWeight { get; set; }
         public string Edition { get; set; }
+        public int? MovieEditionId { get; set; }
+        public EditionClassification EditionClassification { get; set; }
+        public int? EditionCustomFormatScore { get; set; }
 
         public string MagnetUrl { get; set; }
         public string InfoHash { get; set; }
@@ -88,6 +92,9 @@ namespace Radarr.Api.V3.Indexers
                 Quality = parsedMovieInfo.Quality,
                 CustomFormats = remoteMovie.CustomFormats.ToResource(false),
                 CustomFormatScore = remoteMovie.CustomFormatScore,
+                MovieEditionId = remoteMovie.EditionContext?.Edition.Id,
+                EditionClassification = remoteMovie.EditionEvaluation?.Classification,
+                EditionCustomFormatScore = remoteMovie.EditionEvaluation?.CustomFormatScore,
 
                 // QualityWeight
                 Age = releaseInfo.Age,

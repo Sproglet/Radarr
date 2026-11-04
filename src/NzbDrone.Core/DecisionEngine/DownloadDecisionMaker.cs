@@ -7,8 +7,10 @@ using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.DecisionEngine.Specifications;
+using NzbDrone.Core.DecisionEngine.Specifications.RssSync;
 using NzbDrone.Core.Download.Aggregation;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Movies;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 
@@ -27,11 +29,15 @@ namespace NzbDrone.Core.DecisionEngine
         private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly IRemoteMovieAggregationService _aggregationService;
         private readonly Logger _logger;
+        private readonly IMovieEditionRepository _editions;
+        private readonly IMovieEditionEvaluationService _editionEvaluation;
 
         public DownloadDecisionMaker(IEnumerable<IDownloadDecisionEngineSpecification> specifications,
                                      IParsingService parsingService,
                                      ICustomFormatCalculationService formatCalculator,
                                      IRemoteMovieAggregationService aggregationService,
+                                     IMovieEditionRepository editions,
+                                     IMovieEditionEvaluationService editionEvaluation,
                                      Logger logger)
         {
             _specifications = specifications;
@@ -39,6 +45,8 @@ namespace NzbDrone.Core.DecisionEngine
             _formatCalculator = formatCalculator;
             _aggregationService = aggregationService;
             _logger = logger;
+            _editions = editions;
+            _editionEvaluation = editionEvaluation;
         }
 
         public List<DownloadDecision> GetRssDecision(List<ReleaseInfo> reports, bool pushedRelease = false)
@@ -88,13 +96,39 @@ namespace NzbDrone.Core.DecisionEngine
                         {
                             _aggregationService.Augment(remoteMovie);
 
-                            remoteMovie.CustomFormats = _formatCalculator.ParseCustomFormat(remoteMovie, remoteMovie.Release.Size);
-                            remoteMovie.CustomFormatScore = remoteMovie?.Movie?.QualityProfile?.CalculateCustomFormatScore(remoteMovie.CustomFormats) ?? 0;
+                            if (_editions.GetByMovie(remoteMovie.Movie.Id)?.Count > 1)
+                            {
+                                remoteMovie.EditionEvaluation = _editionEvaluation.PreviewParsed(remoteMovie);
+                                remoteMovie.EditionContext = remoteMovie.EditionEvaluation.Context;
+                                remoteMovie.CustomFormats = _formatCalculator.ParseCustomFormat(remoteMovie, remoteMovie.Release.Size);
+                                remoteMovie.CustomFormatScore = remoteMovie.EditionEvaluation.CustomFormatScore ?? 0;
+                                remoteMovie.DownloadAllowed = false;
+                                var rejections = new List<DownloadRejection>
+                                {
+                                    new DownloadRejection(DownloadRejectionReason.MultiEditionAcquisitionDisabled,
+                                        "Multi-edition acquisition is disabled. Classification: " + remoteMovie.EditionEvaluation.Classification.Status + ". " + remoteMovie.EditionEvaluation.Classification.Reason)
+                                };
+                                if (remoteMovie.EditionContext != null)
+                                {
+                                    // Only converted, read-only checks run here. Queue, history and delay
+                                    // remain behind the recovery gate, even when all these checks pass.
+                                    var information = new ReleaseDecisionInformation(pushedRelease, searchCriteria);
+                                    rejections.AddRange(_specifications.Where(IsEditionPreviewSpecification)
+                                        .Select(s => EvaluateSpec(s, remoteMovie, information)).Where(r => r != null));
+                                }
 
-                            _logger.Trace("Custom Format Score of '{0}' [{1}] calculated for '{2}'", remoteMovie.CustomFormatScore, remoteMovie.CustomFormats?.ConcatToString(), report.Title);
+                                decision = new DownloadDecision(remoteMovie, rejections.ToArray());
+                            }
+                            else
+                            {
+                                remoteMovie.CustomFormats = _formatCalculator.ParseCustomFormat(remoteMovie, remoteMovie.Release.Size);
+                                remoteMovie.CustomFormatScore = remoteMovie?.Movie?.QualityProfile?.CalculateCustomFormatScore(remoteMovie.CustomFormats) ?? 0;
 
-                            remoteMovie.DownloadAllowed = remoteMovie.Movie != null;
-                            decision = GetDecisionForReport(remoteMovie, new ReleaseDecisionInformation(pushedRelease, searchCriteria));
+                                _logger.Trace("Custom Format Score of '{0}' [{1}] calculated for '{2}'", remoteMovie.CustomFormatScore, remoteMovie.CustomFormats?.ConcatToString(), report.Title);
+
+                                remoteMovie.DownloadAllowed = remoteMovie.Movie != null;
+                                decision = GetDecisionForReport(remoteMovie, new ReleaseDecisionInformation(pushedRelease, searchCriteria));
+                            }
                         }
                     }
 
@@ -147,6 +181,13 @@ namespace NzbDrone.Core.DecisionEngine
                     yield return decision;
                 }
             }
+        }
+
+        private static bool IsEditionPreviewSpecification(IDownloadDecisionEngineSpecification specification)
+        {
+            return specification is UpgradeDiskSpecification or UpgradeAllowedSpecification or RepackSpecification or
+                ProperSpecification or MonitoredMovieSpecification or QualityAllowedByProfileSpecification or
+                CustomFormatAllowedbyProfileSpecification or Specifications.LanguageSpecification;
         }
 
         private DownloadDecision GetDecisionForReport(RemoteMovie remoteMovie, ReleaseDecisionInformation information)

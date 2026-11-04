@@ -44,6 +44,27 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
                   .Returns(new QualityDefinition { PreferredSize = null });
         }
 
+        [Test]
+        public void should_rank_each_edition_independently_within_shared_movie()
+        {
+            var aLow = GivenRemoteMovie(new QualityModel(Quality.DVD));
+            var bHigh = GivenRemoteMovie(new QualityModel(Quality.Bluray1080p));
+            var aHigh = GivenRemoteMovie(new QualityModel(Quality.Bluray1080p));
+            var bLow = GivenRemoteMovie(new QualityModel(Quality.DVD));
+            var movie = aLow.Movie;
+            var secondaryProfile = new QualityProfile { Items = Qualities.QualityFixture.GetDefaultQualities().AsEnumerable().Reverse().ToList() };
+            foreach (var remote in new[] { aLow, bHigh, aHigh, bLow })
+            {
+                remote.Movie = movie;
+                remote.Release.Title = "Synthetic.Voyage.2026-SyntheticGroup";
+                remote.EditionContext = new MovieEditionContext(new MovieEdition { Id = remote == aLow || remote == aHigh ? 1 : 2 },
+                    remote == aLow || remote == aHigh ? movie.QualityProfile : secondaryProfile, null, true);
+            }
+
+            var decisions = new[] { aLow, bHigh, aHigh, bLow }.Select(r => new DownloadDecision(r)).ToList();
+            Subject.PrioritizeDecisionsForMovies(decisions).Select(d => d.RemoteMovie).Should().Equal(aHigh, aLow, bLow, bHigh);
+        }
+
         private void GivenPreferredSize(double? size)
         {
             Mocker.GetMock<IQualityDefinitionService>()

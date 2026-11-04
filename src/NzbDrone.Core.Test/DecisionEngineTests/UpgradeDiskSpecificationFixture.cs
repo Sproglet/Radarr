@@ -7,6 +7,7 @@ using NUnit.Framework;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Movies;
@@ -61,6 +62,24 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
             Mocker.GetMock<ICustomFormatCalculationService>()
                 .Setup(x => x.ParseCustomFormat(It.IsAny<MovieFile>()))
                 .Returns(new List<CustomFormat>());
+        }
+
+        [Test]
+        public void missing_secondary_file_does_not_compare_with_primary_file()
+        {
+            _parseResultSingle.EditionContext = new MovieEditionContext(new MovieEdition { Id = 2 }, _parseResultSingle.Movie.QualityProfile, null, true);
+            _upgradeDisk.IsSatisfiedBy(_parseResultSingle, new ReleaseDecisionInformation(false, null)).Accepted.Should().BeTrue();
+            _parseResultSingle.Movie.MovieFile.Should().BeSameAs(_firstFile);
+        }
+
+        [Test]
+        public void secondary_upgrade_compares_only_with_its_current_file()
+        {
+            var secondary = new MovieFile { Quality = new QualityModel(Quality.SDTV), DateAdded = DateTime.Now };
+            _parseResultSingle.EditionContext = new MovieEditionContext(new MovieEdition { Id = 2 }, _parseResultSingle.Movie.QualityProfile, secondary, true);
+            _upgradeDisk.IsSatisfiedBy(_parseResultSingle, new ReleaseDecisionInformation(false, null)).Accepted.Should().BeTrue();
+            _parseResultSingle.Movie.MovieFile.Should().BeSameAs(_firstFile);
+            _firstFile.Quality.Quality.Should().Be(Quality.Bluray1080p);
         }
 
         private void GivenProfile(QualityProfile profile)

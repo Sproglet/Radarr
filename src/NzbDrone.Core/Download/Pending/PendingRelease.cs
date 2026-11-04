@@ -7,6 +7,8 @@ namespace NzbDrone.Core.Download.Pending
     public class PendingRelease : ModelBase
     {
         public int MovieId { get; set; }
+        public int? MovieEditionId { get; set; }
+        public int? EditionRuleRevision { get; set; }
         public string Title { get; set; }
         public DateTime Added { get; set; }
         public ParsedMovieInfo ParsedMovieInfo { get; set; }
@@ -20,6 +22,7 @@ namespace NzbDrone.Core.Download.Pending
 
     public class PendingReleaseAdditionalInfo
     {
+        public string EditionName { get; set; }
         public MovieMatchType MovieMatchType { get; set; }
         public ReleaseSourceType ReleaseSource { get; set; }
     }

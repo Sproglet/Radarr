@@ -40,6 +40,19 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
             };
         }
 
+        [TestCase(true, true, true)]
+        [TestCase(true, false, false)]
+        [TestCase(false, true, false)]
+        [TestCase(false, false, false)]
+        public void edition_monitoring_requires_both_switches_even_in_search_preview(bool movieMonitored, bool editionMonitored, bool accepted)
+        {
+            _fakeMovie.Monitored = movieMonitored;
+            _parseResultSingle.EditionContext = new MovieEditionContext(new MovieEdition { Id = 2, Monitored = editionMonitored }, _fakeMovie.QualityProfile, null, true);
+            _monitoredEpisodeSpecification.IsSatisfiedBy(_parseResultSingle, new ReleaseDecisionInformation(false, null)).Accepted.Should().Be(accepted);
+            _monitoredEpisodeSpecification.IsSatisfiedBy(_parseResultSingle, new ReleaseDecisionInformation(false,
+                new MovieSearchCriteria { UserInvokedSearch = true })).Accepted.Should().Be(accepted);
+        }
+
         private void WithMovieUnmonitored()
         {
             _fakeMovie.Monitored = false;

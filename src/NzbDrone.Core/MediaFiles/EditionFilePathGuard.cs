@@ -30,6 +30,7 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             var replacesDestination = false;
+            string replacingPath = null;
             foreach (var file in _files.GetFilesByMovie(movie.Id))
             {
                 var storedPath = Path.Combine(movie.Path, file.RelativePath);
@@ -44,7 +45,27 @@ namespace NzbDrone.Core.MediaFiles
                     throw new InvalidOperationException("The destination belongs to another file. Use distinct edition filenames before importing or renaming.");
                 }
 
+                replacingPath = storedPath;
                 replacesDestination = storedPath.PathEquals(destination);
+            }
+
+            // Unassigned videos also reserve their basename: otherwise importing a different
+            // extension can attach their subtitles to the new edition on the next scan.
+            var directory = Path.GetDirectoryName(destination);
+            if (_disk.FolderExists(directory))
+            {
+                foreach (var path in _disk.GetFiles(directory, false))
+                {
+                    if (!MediaFileExtensions.Extensions.Contains(Path.GetExtension(path)) ||
+                        !string.Equals(Path.ChangeExtension(path, null), Path.ChangeExtension(destination, null), StringComparison.OrdinalIgnoreCase) ||
+                        (replacingPath != null && path.PathEquals(replacingPath)) ||
+                        (sourcePath != null && path.PathEquals(sourcePath)))
+                    {
+                        continue;
+                    }
+
+                    throw new InvalidOperationException("The destination basename is used by an existing video. Resolve the conflict before importing or renaming.");
+                }
             }
 
             if (_disk.FileExists(destination) && !replacesDestination && (sourcePath == null || !sourcePath.PathEquals(destination)))

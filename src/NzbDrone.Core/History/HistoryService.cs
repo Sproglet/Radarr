@@ -108,6 +108,12 @@ namespace NzbDrone.Core.History
 
             var movieId = trackedDownload.MovieInfo.Movie.Id;
             var movieHistory = _historyRepository.FindDownloadHistory(movieId, trackedDownload.ImportedMovie.Quality);
+            if (trackedDownload.MovieInfo.EditionContext?.HasMultipleEditions == true)
+            {
+                var editionId = trackedDownload.MovieInfo.EditionContext.Edition.Id;
+                movieHistory = movieHistory.Where(h => h.MovieEditionId == editionId).ToList();
+            }
+
 
             var processedDownloadId = movieHistory
                 .Where(c => c.EventType != MovieHistoryEventType.Grabbed && c.DownloadId != null)
@@ -140,8 +146,15 @@ namespace NzbDrone.Core.History
                 Languages = message.Movie.Languages,
                 SourceTitle = message.Movie.Release.Title,
                 DownloadId = message.DownloadId,
-                MovieId = message.Movie.Movie.Id
+                MovieId = message.Movie.Movie.Id,
+                MovieEditionId = message.Movie.EditionContext?.Edition.Id,
+                EditionRuleRevision = message.Movie.EditionContext?.Edition.RuleRevision
             };
+
+            if (message.Movie.EditionContext != null)
+            {
+                history.Data["movieEditionName"] = message.Movie.EditionContext.Edition.Name;
+            }
 
             history.Data.Add("Indexer", message.Movie.Release.Indexer);
             history.Data.Add("NzbInfoUrl", message.Movie.Release.InfoUrl);
@@ -201,7 +214,14 @@ namespace NzbDrone.Core.History
                 SourceTitle = message.ImportedMovie.SceneName ?? Path.GetFileNameWithoutExtension(message.MovieInfo.Path),
                 DownloadId = downloadId,
                 MovieId = movie.Id,
+                MovieEditionId = message.ImportedMovie.MovieEditionId,
+                EditionRuleRevision = message.MovieInfo.EditionContext?.Edition.RuleRevision,
             };
+
+            if (message.MovieInfo.EditionContext != null)
+            {
+                history.Data["movieEditionName"] = message.MovieInfo.EditionContext.Edition.Name;
+            }
 
             history.Data.Add("FileId", message.ImportedMovie.Id.ToString());
             history.Data.Add("DroppedPath", message.MovieInfo.Path);

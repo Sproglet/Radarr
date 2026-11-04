@@ -19,7 +19,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         {
             _logger.Debug("Checking if report meets quality requirements. {0}", subject.ParsedMovieInfo.Quality);
 
-            var profile = subject.Movie.QualityProfile;
+            var profile = subject.EffectiveQualityProfile;
             var qualityIndex = profile.GetIndex(subject.ParsedMovieInfo.Quality.Quality);
             var qualityOrGroup = profile.Items[qualityIndex.Index];
 

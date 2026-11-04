@@ -72,10 +72,10 @@ namespace NzbDrone.Core.DecisionEngine
         {
             if (_configService.DownloadPropersAndRepacks == ProperDownloadTypes.DoNotPrefer)
             {
-                return CompareBy(x.RemoteMovie, y.RemoteMovie, remoteMovie => remoteMovie.Movie.QualityProfile.GetIndex(remoteMovie.ParsedMovieInfo.Quality.Quality));
+                return CompareBy(x.RemoteMovie, y.RemoteMovie, remoteMovie => remoteMovie.EffectiveQualityProfile.GetIndex(remoteMovie.ParsedMovieInfo.Quality.Quality));
             }
 
-            return CompareAll(CompareBy(x.RemoteMovie, y.RemoteMovie, remoteMovie => remoteMovie.Movie.QualityProfile.GetIndex(remoteMovie.ParsedMovieInfo.Quality.Quality)),
+            return CompareAll(CompareBy(x.RemoteMovie, y.RemoteMovie, remoteMovie => remoteMovie.EffectiveQualityProfile.GetIndex(remoteMovie.ParsedMovieInfo.Quality.Quality)),
                               CompareBy(x.RemoteMovie, y.RemoteMovie, remoteMovie => remoteMovie.ParsedMovieInfo.Quality.Revision));
         }
 

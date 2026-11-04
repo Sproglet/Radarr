@@ -58,6 +58,60 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
                   .Setup(c => c.Map(It.IsAny<ParsedMovieInfo>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<SearchCriteriaBase>())).Returns(_remoteMovie);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void multi_edition_reports_show_evaluation_but_never_authorize_a_download(bool search)
+        {
+            _reports[0].Title = "Synthetic.Voyage.2026.IMAX.1080p.BluRay-SyntheticGroup";
+            Mocker.GetMock<IMovieEditionRepository>().Setup(r => r.GetByMovie(_remoteMovie.Movie.Id))
+                .Returns(new List<MovieEdition> { new MovieEdition { Id = 1 }, new MovieEdition { Id = 2 } });
+            var evaluation = new MovieEditionEvaluation
+            {
+                Classification = new EditionClassification { Status = EditionClassificationStatus.Matched, CandidateEditionIds = new List<int> { 2 } },
+                Context = new MovieEditionContext(new MovieEdition { Id = 2 }, null, null, true), CustomFormatScore = 123
+            };
+            Mocker.GetMock<IMovieEditionEvaluationService>().Setup(e => e.PreviewParsed(_remoteMovie)).Returns(evaluation);
+            GivenSpecifications(_pass1);
+
+            var results = search ? Subject.GetSearchDecision(_reports, new MovieSearchCriteria()) : Subject.GetRssDecision(_reports);
+
+            results.Should().ContainSingle();
+            results[0].RemoteMovie.EditionContext.Edition.Id.Should().Be(2);
+            results[0].RemoteMovie.CustomFormatScore.Should().Be(123);
+            results[0].RemoteMovie.DownloadAllowed.Should().BeFalse();
+            results[0].Rejections.Should().ContainSingle(r => r.Reason == DownloadRejectionReason.MultiEditionAcquisitionDisabled);
+            _pass1.Verify(p => p.IsSatisfiedBy(It.IsAny<RemoteMovie>(), It.IsAny<ReleaseDecisionInformation>()), Times.Never());
+        }
+
+        [Test]
+        public void edition_preview_reports_selected_profile_rejections_and_keeps_gate_closed()
+        {
+            _reports[0].Title = "Synthetic.Voyage.2026.IMAX.1080p.BluRay-SyntheticGroup";
+            Mocker.GetMock<IMovieEditionRepository>().Setup(r => r.GetByMovie(_remoteMovie.Movie.Id))
+                .Returns(new List<MovieEdition> { new MovieEdition { Id = 1 }, new MovieEdition { Id = 2 } });
+            Mocker.GetMock<NzbDrone.Core.CustomFormats.ICustomFormatCalculationService>()
+                .Setup(f => f.ParseCustomFormat(It.IsAny<RemoteMovie>(), It.IsAny<long>()))
+                .Returns(new List<NzbDrone.Core.CustomFormats.CustomFormat>());
+            var evaluation = new MovieEditionEvaluation
+            {
+                Classification = new EditionClassification { Status = EditionClassificationStatus.Matched },
+                Context = new MovieEditionContext(new MovieEdition { Id = 2 }, new NzbDrone.Core.Profiles.Qualities.QualityProfile { MinFormatScore = 200 }, null, true),
+                CustomFormatScore = 123
+            };
+            Mocker.GetMock<IMovieEditionEvaluationService>().Setup(e => e.PreviewParsed(_remoteMovie)).Returns(evaluation);
+            Mocker.SetConstant<IEnumerable<IDownloadDecisionEngineSpecification>>(new IDownloadDecisionEngineSpecification[]
+            {
+                new CustomFormatAllowedbyProfileSpecification(TestLogger), _pass1.Object
+            });
+
+            var decision = Subject.GetRssDecision(_reports).Single();
+
+            decision.Rejections.Should().Contain(r => r.Reason == DownloadRejectionReason.MultiEditionAcquisitionDisabled);
+            decision.Rejections.Should().Contain(r => r.Reason == DownloadRejectionReason.CustomFormatMinimumScore);
+            decision.RemoteMovie.DownloadAllowed.Should().BeFalse();
+            _pass1.Verify(p => p.IsSatisfiedBy(It.IsAny<RemoteMovie>(), It.IsAny<ReleaseDecisionInformation>()), Times.Never());
+        }
+
         private void GivenSpecifications(params Mock<IDownloadDecisionEngineSpecification>[] mocks)
         {
             Mocker.SetConstant<IEnumerable<IDownloadDecisionEngineSpecification>>(mocks.Select(c => c.Object));
@@ -171,16 +225,18 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
 
             _reports = new List<ReleaseInfo>
                 {
-                    new ReleaseInfo { Title = "Trolls.2016.720p.WEB-DL.DD5.1.H264-FGT" },
-                    new ReleaseInfo { Title = "Trolls.2016.720p.WEB-DL.DD5.1.H264-FGT" },
-                    new ReleaseInfo { Title = "Trolls.2016.720p.WEB-DL.DD5.1.H264-FGT" }
+                    new ReleaseInfo { Title = "Synthetic.Voyage.2026.720p.WEB-DL-SyntheticGroup" },
+                    new ReleaseInfo { Title = "Synthetic.Voyage.2026.720p.WEB-DL-SyntheticGroup" },
+                    new ReleaseInfo { Title = "Synthetic.Voyage.2026.720p.WEB-DL-SyntheticGroup" }
                 };
 
-            Subject.GetRssDecision(_reports);
+            var decisions = Subject.GetRssDecision(_reports);
 
             Mocker.GetMock<IParsingService>().Verify(c => c.Map(It.IsAny<ParsedMovieInfo>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<SearchCriteriaBase>()), Times.Exactly(_reports.Count));
 
-            ExceptionVerification.ExpectedErrors(3);
+            decisions.Should().HaveCount(3);
+            decisions.Should().OnlyContain(d => d.Rejections.Any(r => r.Reason == DownloadRejectionReason.Error));
+            ExceptionVerification.IgnoreErrors();
         }
 
         [Test]

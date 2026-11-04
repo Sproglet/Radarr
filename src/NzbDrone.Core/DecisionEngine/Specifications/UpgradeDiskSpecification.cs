@@ -25,9 +25,9 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public virtual DownloadSpecDecision IsSatisfiedBy(RemoteMovie subject, ReleaseDecisionInformation information)
         {
-            var qualityProfile = subject.Movie.QualityProfile;
+            var qualityProfile = subject.EffectiveQualityProfile;
 
-            var file = subject.Movie.MovieFile;
+            var file = subject.CurrentFile;
 
             if (file == null)
             {

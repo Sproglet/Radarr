@@ -18,7 +18,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public virtual DownloadSpecDecision IsSatisfiedBy(RemoteMovie subject, ReleaseDecisionInformation information)
         {
-            var minScore = subject.Movie.QualityProfile.MinFormatScore;
+            var minScore = subject.EffectiveQualityProfile.MinFormatScore;
             var score = subject.CustomFormatScore;
 
             if (score < minScore)

@@ -372,6 +372,33 @@ namespace NzbDrone.Core.Test.MediaFiles
             ExceptionVerification.ExpectedWarns(1);
         }
 
+        [TestCase(".mp4")]
+        [TestCase(".MKV")]
+        public void should_reject_unassigned_video_basename_before_recycling(string extension)
+        {
+            ManualImport(_imax, "SyntheticImax");
+            ManualImport(_directors, "SyntheticDirectors");
+            var before = Db.All<MovieFile>();
+            var current = before.Single(f => f.MovieEditionId == _imax.Id);
+            var conflict = Path.ChangeExtension(Path.Combine(_movie.Path, current.RelativePath), extension);
+            if (File.Exists(conflict))
+            {
+                Assert.Ignore("Requires distinct paths on a case-sensitive filesystem.");
+            }
+
+            File.WriteAllText(conflict, "Synthetic unassigned video");
+            var local = new LocalMovie { Movie = _movies.Get(_movie.Id), Path = Source("SyntheticUnassignedConflict"), EditionContext = _contexts.Resolve(_movie, _imax.Id), Quality = new QualityModel(Quality.Bluray1080p) };
+
+            var result = _importer.Import(new List<ImportDecision> { new ImportDecision(local) }, true, null, ImportMode.Copy);
+
+            result.Single().Result.Should().Be(ImportResultType.Skipped);
+            result.Single().Errors.Single().Should().Contain("basename");
+            Db.All<MovieFile>().Select(f => f.Id).Should().BeEquivalentTo(before.Select(f => f.Id));
+            File.ReadAllText(conflict).Should().Be("Synthetic unassigned video");
+            _recycled.Should().BeEmpty();
+            ExceptionVerification.ExpectedWarns(1);
+        }
+
         [Test]
         public void should_reject_rename_collisions_before_moving_any_file()
         {

@@ -17,6 +17,11 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
         public DownloadSpecDecision IsSatisfiedBy(RemoteMovie subject, ReleaseDecisionInformation information)
         {
+            if (subject.EditionContext != null && (!subject.Movie.Monitored || !subject.EditionContext.Edition.Monitored))
+            {
+                return DownloadSpecDecision.Reject(DownloadRejectionReason.MovieNotMonitored, "Movie and selected edition must both be monitored");
+            }
+
             if (information.SearchCriteria is { UserInvokedSearch: true })
             {
                 _logger.Debug("Skipping monitored check during search");

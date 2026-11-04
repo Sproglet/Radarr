@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Linq;
 using Dapper;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
@@ -23,11 +24,32 @@ namespace NzbDrone.Core.Movies
 
         protected override bool RequiresLifecycleTransaction => true;
 
+        protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, MovieEdition edition)
+        {
+            MovieEditionClassifier.ValidateRules(edition.MatchRules);
+        }
+
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, MovieEdition edition, List<string> properties)
         {
             connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id"" WHERE ""Id"" =
                 (SELECT ""MovieId"" FROM ""MovieEditions"" WHERE ""Id"" = @Id)", new { edition.Id }, transaction);
             var stored = connection.QuerySingle<MovieEdition>(@"SELECT * FROM ""MovieEditions"" WHERE ""Id"" = @Id", new { edition.Id }, transaction);
+            if (properties.Contains(nameof(MovieEdition.MatchRules)))
+            {
+                MovieEditionClassifier.ValidateRules(edition.MatchRules);
+            }
+
+            var rulesChanged = properties.Contains(nameof(MovieEdition.MatchRules)) &&
+                !(edition.MatchRules ?? new List<string>()).SequenceEqual(stored.MatchRules ?? new List<string>());
+            var attributesChanged = properties.Contains(nameof(MovieEdition.Attributes)) &&
+                (edition.Attributes.Count != stored.Attributes.Count || edition.Attributes.Any(a => !stored.Attributes.TryGetValue(a.Key, out var value) || value != a.Value));
+            edition.RuleRevision = rulesChanged || attributesChanged ? checked(stored.RuleRevision + 1) : stored.RuleRevision;
+            if (rulesChanged || attributesChanged)
+            {
+                connection.Execute(@"UPDATE ""MovieEditions"" SET ""RuleRevision"" = @RuleRevision WHERE ""Id"" = @Id",
+                    new { edition.Id, edition.RuleRevision }, transaction);
+            }
+
             if ((properties.Contains(nameof(MovieEdition.MovieId)) && edition.MovieId != stored.MovieId) ||
                 (properties.Contains(nameof(MovieEdition.MovieFileId)) && edition.MovieFileId != stored.MovieFileId))
             {
@@ -45,9 +67,19 @@ namespace NzbDrone.Core.Movies
             references += connection.ExecuteScalar<int>(@"SELECT COUNT(*) FROM ""MovieFiles"" f
                 WHERE f.""MovieEditionId"" IS NOT NULL AND NOT EXISTS
                     (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = f.""MovieEditionId"")", transaction: transaction);
+            references += connection.ExecuteScalar<int>(@"SELECT COUNT(*) FROM ""PendingReleases"" p
+                WHERE p.""MovieEditionId"" IS NOT NULL AND NOT EXISTS
+                    (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = p.""MovieEditionId"")", transaction: transaction);
+            references += connection.ExecuteScalar<int>(@"SELECT COUNT(*) FROM ""DownloadHistory"" h
+                WHERE h.""MovieEditionId"" IS NOT NULL AND h.""EventType"" = 1
+                  AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = h.""MovieEditionId"")
+                  AND NOT EXISTS (SELECT 1 FROM ""DownloadHistory"" d
+                      WHERE d.""DownloadId"" = h.""DownloadId"" AND d.""DownloadClientId"" = h.""DownloadClientId""
+                        AND d.""EventType"" IN (2, 3, 4)
+                        AND (d.""Date"" > h.""Date"" OR (d.""Date"" = h.""Date"" AND d.""Id"" > h.""Id"")))", transaction: transaction);
             if (references != 0)
             {
-                throw new InvalidOperationException("Cannot remove a primary edition or an edition that still owns files.");
+                throw new InvalidOperationException("Cannot remove a primary edition, an edition that still owns files, or a target with pending/in-flight work.");
             }
         }
 

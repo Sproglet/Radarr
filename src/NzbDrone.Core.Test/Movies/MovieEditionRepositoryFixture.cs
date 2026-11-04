@@ -34,6 +34,45 @@ namespace NzbDrone.Core.Test.MovieTests
         }
 
         [Test]
+        public void should_reject_invalid_rules_and_revision_updates_transactionally()
+        {
+            var revision = Subject.Get(_primary.Id).RuleRevision;
+            _primary.MatchRules.Add("[");
+            Action save = () => Subject.Update(_primary);
+            save.Should().Throw<ArgumentException>();
+            Subject.Get(_primary.Id).MatchRules.Should().BeEmpty();
+            Subject.Get(_primary.Id).RuleRevision.Should().Be(revision);
+            _primary.MatchRules[0] = "SyntheticGroup$";
+            Subject.SetFields(_primary, e => e.MatchRules);
+            Subject.Get(_primary.Id).RuleRevision.Should().Be(revision + 1);
+            _primary.RuleRevision = 0;
+            Subject.Update(_primary);
+            Subject.Get(_primary.Id).RuleRevision.Should().Be(revision + 1);
+        }
+
+        [Test]
+        public void should_roll_back_invalid_rule_insert()
+        {
+            var count = Subject.GetByMovie(_movie.Id).Count;
+            Action insert = () => Subject.Insert(new MovieEdition
+            {
+                MovieId = _movie.Id, EditionKey = "synthetic-invalid", Name = "Synthetic Invalid",
+                QualityProfileId = _movie.QualityProfileId, MatchRules = new List<string> { "[" }
+            });
+            insert.Should().Throw<ArgumentException>();
+            Subject.GetByMovie(_movie.Id).Should().HaveCount(count);
+        }
+
+        [Test]
+        public void should_increment_revision_on_partial_attribute_change()
+        {
+            var revision = Subject.Get(_primary.Id).RuleRevision;
+            _primary.Attributes["framing"] = "imax";
+            Subject.SetFields(_primary, e => e.Attributes);
+            Subject.Get(_primary.Id).RuleRevision.Should().Be(revision + 1);
+        }
+
+        [Test]
         public void should_assign_file_and_update_primary_projection()
         {
             var file = AddFile();

@@ -103,6 +103,8 @@ namespace NzbDrone.Core.Download.History
             {
                 EventType = DownloadHistoryEventType.DownloadGrabbed,
                 MovieId = message.Movie.Movie.Id,
+                MovieEditionId = message.Movie.EditionContext?.Edition.Id,
+                EditionRuleRevision = message.Movie.EditionContext?.Edition.RuleRevision,
                 DownloadId = message.DownloadId,
                 SourceTitle = message.Movie.Release.Title,
                 Date = DateTime.UtcNow,
@@ -111,6 +113,11 @@ namespace NzbDrone.Core.Download.History
                 DownloadClientId = message.DownloadClientId,
                 Release = message.Movie.Release
             };
+
+            if (message.Movie.EditionContext != null)
+            {
+                history.Data["movieEditionName"] = message.Movie.EditionContext.Edition.Name;
+            }
 
             history.Data.Add("Indexer", message.Movie.Release.Indexer);
             history.Data.Add("DownloadClient", message.DownloadClient);
@@ -145,6 +152,8 @@ namespace NzbDrone.Core.Download.History
             {
                 EventType = DownloadHistoryEventType.FileImported,
                 MovieId = message.ImportedMovie.MovieId,
+                MovieEditionId = message.ImportedMovie.MovieEditionId,
+                EditionRuleRevision = message.MovieInfo.EditionContext?.Edition.RuleRevision,
                 DownloadId = downloadId,
                 SourceTitle = message.MovieInfo.Path,
                 Date = DateTime.UtcNow,
