@@ -30,7 +30,7 @@ namespace NzbDrone.Core.MediaFiles
 
         protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, MovieFile file)
         {
-            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id"" WHERE ""Id"" = @MovieId", new { file.MovieId }, transaction);
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", new { file.MovieId }, transaction);
             if (file.EditionContext != null)
             {
                 if (file.EditionContext.Edition.MovieId != file.MovieId || file.MovieEditionId != file.EditionContext.Edition.Id)
@@ -57,7 +57,7 @@ namespace NzbDrone.Core.MediaFiles
 
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, MovieFile file, List<string> properties)
         {
-            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id"" WHERE ""Id"" =
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" =
                 (SELECT ""MovieId"" FROM ""MovieFiles"" WHERE ""Id"" = @Id)", new { file.Id }, transaction);
             var stored = connection.QuerySingle<MovieFile>(@"SELECT * FROM ""MovieFiles"" WHERE ""Id"" = @Id", new { file.Id }, transaction);
             if (stored.MovieEditionId.HasValue && file.MovieId != stored.MovieId && properties.Contains(nameof(MovieFile.MovieId)))

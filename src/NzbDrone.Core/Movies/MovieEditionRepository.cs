@@ -31,7 +31,7 @@ namespace NzbDrone.Core.Movies
 
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, MovieEdition edition, List<string> properties)
         {
-            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id"" WHERE ""Id"" =
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" =
                 (SELECT ""MovieId"" FROM ""MovieEditions"" WHERE ""Id"" = @Id)", new { edition.Id }, transaction);
             var stored = connection.QuerySingle<MovieEdition>(@"SELECT * FROM ""MovieEditions"" WHERE ""Id"" = @Id", new { edition.Id }, transaction);
             if (properties.Contains(nameof(MovieEdition.MatchRules)))
@@ -60,7 +60,7 @@ namespace NzbDrone.Core.Movies
         protected override void OnDeleted(IDbConnection connection, IDbTransaction transaction)
         {
             // Roll back removal if either the primary selection or any retained file still refers to it.
-            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id""", transaction: transaction);
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored""", transaction: transaction);
             var references = connection.ExecuteScalar<int>(@"SELECT COUNT(*) FROM ""Movies"" m
                 WHERE m.""PrimaryEditionId"" IS NOT NULL AND NOT EXISTS
                     (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = m.""PrimaryEditionId"")", transaction: transaction);
@@ -92,7 +92,7 @@ namespace NzbDrone.Core.Movies
         {
             using var connection = _database.OpenConnection();
             using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
-            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id"" WHERE ""Id"" = @MovieId", new { MovieId = movieId }, transaction);
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", new { MovieId = movieId }, transaction);
             var updated = connection.Execute(@"UPDATE ""Movies"" SET ""PrimaryEditionId"" = @EditionId,
                 ""MovieFileId"" = COALESCE((SELECT ""MovieFileId"" FROM ""MovieEditions"" WHERE ""Id"" = @EditionId), 0)
                 WHERE ""Id"" = @MovieId AND EXISTS (SELECT 1 FROM ""MovieEditions"" e
@@ -120,7 +120,7 @@ namespace NzbDrone.Core.Movies
 
         internal static void AssignCurrentFile(IDbConnection connection, IDbTransaction transaction, int movieId, int editionId, int fileId, int? expectedFileId)
         {
-            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id"" WHERE ""Id"" = @MovieId", new { MovieId = movieId }, transaction);
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", new { MovieId = movieId }, transaction);
             var parameters = new { MovieId = movieId, EditionId = editionId, FileId = fileId, ExpectedFileId = expectedFileId };
 
             var claimed = connection.Execute(@"UPDATE ""MovieFiles""

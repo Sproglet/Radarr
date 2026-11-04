@@ -30,7 +30,7 @@ namespace NzbDrone.Core.Download.History
                 return;
             }
 
-            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id"" WHERE ""Id"" = @MovieId", new { history.MovieId }, transaction);
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", new { history.MovieId }, transaction);
             if (connection.ExecuteScalar<int>(@"SELECT COUNT(*) FROM ""MovieEditions"" WHERE ""Id"" = @MovieEditionId AND ""MovieId"" = @MovieId",
                 new { history.MovieId, history.MovieEditionId }, transaction) != 1)
             {

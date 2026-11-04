@@ -89,32 +89,25 @@ namespace NzbDrone.Core.Test.Datastore.Migration
 
         private static void InsertMovie(add_movie_editions migration, int id, int fileId, bool monitored = true, DateTime? searched = null)
         {
-            migration.Insert.IntoTable("Movies").Row(new
+            migration.Execute.WithConnection((connection, transaction) =>
             {
-                Id = id,
-                MovieMetadataId = id,
-                Monitored = monitored,
-                MinimumAvailability = 4,
-                QualityProfileId = 7,
-                MovieFileId = fileId,
-                Path = "/movies/Example Feature " + id,
-                LastSearchTime = searched
+                var identityOverride = connection is Npgsql.NpgsqlConnection ? " OVERRIDING SYSTEM VALUE" : string.Empty;
+                connection.Execute(@"INSERT INTO ""Movies""
+                    (""Id"", ""MovieMetadataId"", ""Monitored"", ""MinimumAvailability"", ""QualityProfileId"", ""MovieFileId"", ""Path"", ""LastSearchTime"")" +
+                    identityOverride + " VALUES (@Id, @Id, @Monitored, 4, 7, @FileId, @Path, @Searched)",
+                    new { Id = id, Monitored = monitored, FileId = fileId, Path = "/movies/Synthetic Feature " + id, Searched = searched }, transaction);
             });
         }
 
         private static void InsertFile(add_movie_editions migration, int id, int movieId, string edition)
         {
-            migration.Insert.IntoTable("MovieFiles").Row(new
+            migration.Execute.WithConnection((connection, transaction) =>
             {
-                Id = id,
-                MovieId = movieId,
-                RelativePath = "Example.Feature.2026.mkv",
-                Quality = "{}",
-                IndexerFlags = 0,
-                Size = 1234,
-                DateAdded = new DateTime(2026, 1, 1),
-                Languages = "[1]",
-                Edition = edition
+                var identityOverride = connection is Npgsql.NpgsqlConnection ? " OVERRIDING SYSTEM VALUE" : string.Empty;
+                connection.Execute(@"INSERT INTO ""MovieFiles""
+                    (""Id"", ""MovieId"", ""RelativePath"", ""Quality"", ""IndexerFlags"", ""Size"", ""DateAdded"", ""Languages"", ""Edition"")" +
+                    identityOverride + " VALUES (@Id, @MovieId, @RelativePath, '{}', 0, 1234, @DateAdded, '[1]', @Edition)",
+                    new { Id = id, MovieId = movieId, RelativePath = "Example.Feature.2026.mkv", DateAdded = new DateTime(2026, 1, 1), Edition = edition }, transaction);
             });
         }
 

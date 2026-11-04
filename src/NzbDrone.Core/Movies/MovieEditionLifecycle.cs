@@ -50,7 +50,7 @@ namespace NzbDrone.Core.Movies
         public static void Repair(IDbConnection connection, IDbTransaction transaction)
         {
             // Maintenance takes the same parent locks as assignments before examining either direction.
-            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id""", transaction: transaction);
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored""", transaction: transaction);
             RemoveOrphanedEditions(connection, transaction);
             connection.Execute(@"UPDATE ""MovieEditions"" SET ""MovieFileId"" = NULL WHERE ""MovieFileId"" IS NOT NULL AND NOT EXISTS
                 (SELECT 1 FROM ""MovieFiles"" f WHERE f.""Id"" = ""MovieEditions"".""MovieFileId""

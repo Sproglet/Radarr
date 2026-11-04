@@ -67,7 +67,7 @@ namespace NzbDrone.Core.Movies
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, Movie movie, List<string> properties)
         {
             // Lock the parent before touching edition rows, also used by assignment and primary switching.
-            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id"" WHERE ""Id"" = @Id", new { movie.Id }, transaction);
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @Id", new { movie.Id }, transaction);
             var stored = connection.QuerySingle<Movie>(@"SELECT * FROM ""Movies"" WHERE ""Id"" = @Id", new { movie.Id }, transaction);
             movie.PrimaryEditionId = stored.PrimaryEditionId;
             movie.MovieFileId = stored.MovieFileId;

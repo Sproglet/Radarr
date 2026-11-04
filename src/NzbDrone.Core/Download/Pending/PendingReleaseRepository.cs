@@ -32,7 +32,7 @@ namespace NzbDrone.Core.Download.Pending
 
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, PendingRelease release, List<string> properties)
         {
-            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id"" WHERE ""Id"" =
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" =
                 (SELECT ""MovieId"" FROM ""PendingReleases"" WHERE ""Id"" = @Id)", new { release.Id }, transaction);
             var stored = connection.QuerySingle<PendingRelease>(@"SELECT * FROM ""PendingReleases"" WHERE ""Id"" = @Id", new { release.Id }, transaction);
             if ((properties.Contains(nameof(PendingRelease.MovieId)) && release.MovieId != stored.MovieId) ||
@@ -51,7 +51,7 @@ namespace NzbDrone.Core.Download.Pending
                 return;
             }
 
-            connection.Execute(@"UPDATE ""Movies"" SET ""Id"" = ""Id"" WHERE ""Id"" = @MovieId", new { release.MovieId }, transaction);
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", new { release.MovieId }, transaction);
             if (connection.ExecuteScalar<int>(@"SELECT COUNT(*) FROM ""MovieEditions"" WHERE ""Id"" = @MovieEditionId AND ""MovieId"" = @MovieId",
                 new { release.MovieId, release.MovieEditionId }, transaction) != 1)
             {

@@ -2,7 +2,7 @@
 
 Date: 4 November 2026 (verification completed 3 November)
 
-Branch: `Multiple-Editions`, continued from `855e517b3`. On resuming, the working tree was clean and the Phase 2/3 implementation was already recorded in existing commit `1ed83ece1`. This checkpoint records the November collision, classification, gated search/policy and download-identity groundwork. Acquisition remains disabled; no push has been performed.
+Branch: `Multiple-Editions`, continued from `855e517b3`. On resuming, the working tree was clean and the Phase 2/3 implementation was already recorded in existing commit `1ed83ece1`. This checkpoint records the November collision, classification, gated search/policy and download-identity groundwork. Acquisition remains disabled. Remote integration is recorded below; older push-status notes describe the earlier checkpoints.
 
 ## Phase 2 prerequisite
 
@@ -86,6 +86,15 @@ Runtime reproduction: `python3 /src/docs/development/verify-phase3.py` inside a 
 - Verification: **483 passed, 1 existing skip, 0 failed on each of SQLite and PostgreSQL 16**, using disposable Docker databases/configurations. Selection includes `edition_download_identity`, `EditionDownloadIdentity`, `MovieEdition`, `PendingRelease`, `HistoryTests`, `TrackedDownload`, `DecisionEngineTests`, `EditionFileHandlingFixture`, `Housekeeping`, `add_movie_editions`. Actual migration 244 tests preserve unassigned legacy pending/history/download rows. New database-backed tests verify scoped reloads, name/revision snapshots from both real grab handlers, pending ownership/deletion rollback, unfinished-grab deletion blocking followed by completion, persisted intent after rule edits, mismatched records and removed targets. Existing legacy tests pass; the skip remains `should_not_allow_download_if_no_episodes_found`.
 - Linux application/API Release build passed with zero warnings/errors. Options remain `EnableAnalyzers=false`, `NuGetAudit=false`, `RuntimeIdentifiers=linux-x64`; existing dependency advisories remain unresolved. Artifacts: `_temp/edition-test-results/edition-identity-sqlite.trx`, `edition-identity-postgres.trx`, matching logs and `edition-identity-build.log`. `git diff --check` passed. Disposable containers and their network were removed. No production data, actual download client, live-indexer workflow or process-restart queue recovery was used or verified. The changes are included in this checkpoint commit; no push has been performed.
 - **The recovery/acquisition gate remains incomplete and closed.** This slice supplies persistence and a recovery primitive; it does not yet wire that primitive throughout tracked-download cache refresh, live queue/pending reconstruction or completed-download import. Pending grouping/removal, release deduplication, delay/history specifications, contradictory-evidence review, failure/completion event propagation and queue/history API fields still need conversion. Grab-history writes to the two history streams are separate transactions. Repository reload tests are not proof of live queue recovery across a process restart. Acquisition stays disabled and no production configurations or media are used.
+
+## Remote integration (4 November 2026)
+
+The push was blocked by diverged history: the local branch had two edition commits absent from the remote, and the remote had 40 commits absent locally. Merged `origin/Multiple-Editions` at `6f79323bb`, preserving both histories. The remote includes .NET SDK 10.0.402, updated FluentMigrator and other upstream changes; the shared filename-builder changes merge cleanly with managed-edition naming.
+
+The newer PostgreSQL identity mode exposed two compatibility issues during verification. Synthetic migration fixtures now use parameterized inserts with `OVERRIDING SYSTEM VALUE` on PostgreSQL. Edition lifecycle parent-row locks now use `Monitored = Monitored` instead of updating the generated identity column. The locking operation preserves values and continues to serialize parent mutations on both databases. No migration identity mode or production data was altered.
+
+Final merged-branch verification under SDK 10.0.402: **483 passed, 1 existing skip, 0 failed on each of SQLite and PostgreSQL 16** using the identity/lifecycle regression selection recorded above. The Linux application/API Release build passed with zero warnings/errors. Flags remain `EnableAnalyzers=false`, `NuGetAudit=false`, `RuntimeIdentifiers=linux-x64`; this is not an analyzer/security-audit or full UI/recovery gate. Artifacts: `_temp/edition-test-results/edition-merge-sqlite.trx`, `edition-merge-postgres.trx`, matching logs and `edition-merge-build.log`. Acquisition remains disabled. Disposable containers/network were removed after verification. The merge retains both branch histories and permits a normal fast-forward push without rewriting the remote.
+
 
 ---
 
