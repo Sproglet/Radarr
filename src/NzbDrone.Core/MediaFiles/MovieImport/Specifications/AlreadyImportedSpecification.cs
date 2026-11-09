@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Collections.Generic;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.DecisionEngine;
@@ -32,13 +33,20 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Specifications
 
             var movie = localMovie.Movie;
 
-            if (!movie.HasFile)
+            if (localMovie.EditionContext != null ? localMovie.CurrentFile == null : !movie.HasFile)
             {
                 _logger.Debug("Skipping already imported check for movie without file");
                 return ImportSpecDecision.Accept();
             }
 
             var movieImportedHistory = _historyService.GetByMovieId(movie.Id, null);
+            if (localMovie.EditionContext != null)
+            {
+                var clientId = downloadClientItem.DownloadClientInfo?.Id;
+                movieImportedHistory = movieImportedHistory.Where(h => h.MovieEditionId == localMovie.EditionContext.Edition.Id &&
+                    clientId.HasValue && int.TryParse(h.Data.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID), out var recorded) && recorded == clientId)
+                    .OrderByDescending(h => h.Date).ThenByDescending(h => h.Id).ToList();
+            }
             var lastImported = movieImportedHistory.FirstOrDefault(h =>
                 h.DownloadId == downloadClientItem.DownloadId &&
                 h.EventType == MovieHistoryEventType.DownloadFolderImported);

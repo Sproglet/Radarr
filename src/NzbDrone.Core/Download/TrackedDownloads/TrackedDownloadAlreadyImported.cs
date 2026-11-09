@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
@@ -32,7 +33,13 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
             var movie = trackedDownload.RemoteMovie.Movie;
 
-            var lastHistoryItem = historyItems.FirstOrDefault(h => h.MovieId == movie.Id);
+            var edition = trackedDownload.RemoteMovie.EditionContext?.Edition.Id;
+            var lastHistoryItem = historyItems.Where(h => h.MovieId == movie.Id &&
+                    (!int.TryParse(h.Data.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID), out var client) || client == trackedDownload.DownloadClient) &&
+                    (!edition.HasValue || (h.MovieEditionId == edition &&
+                        h.Data.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID) == trackedDownload.DownloadClient.ToString() &&
+                        string.Equals(h.DownloadId, trackedDownload.DownloadItem.DownloadId, StringComparison.OrdinalIgnoreCase))))
+                .OrderByDescending(h => h.Date).ThenByDescending(h => h.Id).FirstOrDefault();
 
             if (lastHistoryItem == null)
             {

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System;
 using FizzWare.NBuilder;
 using FluentAssertions;
 using NUnit.Framework;
@@ -76,6 +77,31 @@ namespace NzbDrone.Core.Test.Download.TrackedDownloads
             Subject.IsImported(_trackedDownload, _historyItems)
                    .Should()
                    .BeTrue();
+        }
+
+        [TestCase("same", true)]
+        [TestCase("client", false)]
+        [TestCase("edition", false)]
+        [TestCase("missing-client", false)]
+        [TestCase("download", false)]
+        public void completed_edition_requires_its_own_download_and_client_provenance(string difference, bool expected)
+        {
+            _trackedDownload.DownloadClient = 9;
+            _trackedDownload.DownloadItem.DownloadId = "synthetic-shared";
+            _trackedDownload.DownloadItem.Title = "Synthetic.Voyage.2026-SyntheticGroup";
+            _trackedDownload.RemoteMovie.EditionContext = new MovieEditionContext(new MovieEdition { Id = 2, MovieId = _movie.Id }, null, null, true);
+            var grab = new MovieHistory { MovieId = _movie.Id, MovieEditionId = 2, DownloadId = "synthetic-shared",
+                Date = new DateTime(2026, 11, 9, 0, 0, 0, DateTimeKind.Utc), EventType = MovieHistoryEventType.Grabbed };
+            grab.Data[MovieHistory.DOWNLOAD_CLIENT_ID] = "9";
+            var imported = new MovieHistory { MovieId = _movie.Id, MovieEditionId = difference == "edition" ? 1 : 2,
+                DownloadId = difference == "download" ? "synthetic-other" : "synthetic-shared",
+                Date = grab.Date.AddSeconds(1), EventType = MovieHistoryEventType.DownloadFolderImported };
+            if (difference != "missing-client")
+            {
+                imported.Data[MovieHistory.DOWNLOAD_CLIENT_ID] = difference == "client" ? "10" : "9";
+            }
+
+            Subject.IsImported(_trackedDownload, new List<MovieHistory> { imported, grab }).Should().Be(expected);
         }
     }
 }

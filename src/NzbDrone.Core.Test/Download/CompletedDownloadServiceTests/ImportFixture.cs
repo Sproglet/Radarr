@@ -58,7 +58,7 @@ namespace NzbDrone.Core.Test.Download
                   .Returns(remoteMovie.Movie);
 
             Mocker.GetMock<IHistoryService>()
-                  .Setup(s => s.FindByDownloadId(It.IsAny<string>()))
+                  .Setup(s => s.FindByDownloadId(It.IsAny<int>(), It.IsAny<string>()))
                   .Returns(new List<MovieHistory>());
 
             Mocker.GetMock<IProvideImportItemService>()

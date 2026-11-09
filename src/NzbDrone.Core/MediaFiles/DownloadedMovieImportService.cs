@@ -190,7 +190,9 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             var cleanedUpName = GetCleanedUpFolderName(directoryInfo.Name);
-            var historyItems = _historyService.FindByDownloadId(downloadClientItem?.DownloadId ?? "");
+            var historyItems = downloadClientItem?.DownloadClientInfo?.Id > 0
+                ? _historyService.FindByDownloadId(downloadClientItem.DownloadClientInfo.Id, downloadClientItem.DownloadId)
+                : _historyService.FindByDownloadId(downloadClientItem?.DownloadId ?? "");
             var firstHistoryItem = historyItems?.OrderByDescending(h => h.Date).FirstOrDefault();
             var folderInfo = Parser.Parser.ParseMovieTitle(cleanedUpName);
 

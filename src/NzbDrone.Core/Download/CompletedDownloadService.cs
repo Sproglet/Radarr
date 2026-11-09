@@ -79,7 +79,7 @@ namespace NzbDrone.Core.Download
                 return;
             }
 
-            var grabbedHistories = _historyService.FindByDownloadId(trackedDownload.DownloadItem.DownloadId).Where(h => h.EventType == MovieHistoryEventType.Grabbed).ToList();
+            var grabbedHistories = _historyService.FindByDownloadId(trackedDownload.DownloadClient, trackedDownload.DownloadItem.DownloadId).Where(h => h.EventType == MovieHistoryEventType.Grabbed).ToList();
             var historyItem = grabbedHistories.MaxBy(h => h.Date);
 
             if (historyItem == null && trackedDownload.DownloadItem.Category.IsNullOrWhiteSpace())
@@ -224,7 +224,7 @@ namespace NzbDrone.Core.Download
             // episode files and still mark the download complete when all files are imported.
             var atLeastOneMovieImported = importResults.Any(c => c.Result == ImportResultType.Imported);
 
-            var historyItems = _historyService.FindByDownloadId(trackedDownload.DownloadItem.DownloadId)
+            var historyItems = _historyService.FindByDownloadId(trackedDownload.DownloadClient, trackedDownload.DownloadItem.DownloadId)
                                                   .OrderByDescending(h => h.Date)
                                                   .ToList();
 
@@ -266,7 +266,7 @@ namespace NzbDrone.Core.Download
 
             if (!trackedDownload.HasNotifiedManualInteractionRequired)
             {
-                var grabbedHistories = _historyService.FindByDownloadId(trackedDownload.DownloadItem.DownloadId).Where(h => h.EventType == MovieHistoryEventType.Grabbed).ToList();
+                var grabbedHistories = _historyService.FindByDownloadId(trackedDownload.DownloadClient, trackedDownload.DownloadItem.DownloadId).Where(h => h.EventType == MovieHistoryEventType.Grabbed).ToList();
 
                 trackedDownload.HasNotifiedManualInteractionRequired = true;
 

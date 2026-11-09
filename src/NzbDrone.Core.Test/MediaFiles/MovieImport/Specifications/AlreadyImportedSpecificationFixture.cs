@@ -7,6 +7,7 @@ using Moq;
 using NUnit.Framework;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.History;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.MovieImport.Specifications;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Parser.Model;
@@ -44,6 +45,32 @@ namespace NzbDrone.Core.Test.MediaFiles.MovieImport.Specifications
             Mocker.GetMock<IHistoryService>()
                 .Setup(s => s.GetByMovieId(It.IsAny<int>(), null))
                 .Returns(history);
+        }
+
+        [TestCase("same", false)]
+        [TestCase("client", true)]
+        [TestCase("edition", true)]
+        [TestCase("unknown-client", true)]
+        [TestCase("missing-file", true)]
+        public void edition_import_history_is_scoped_to_client_and_current_target(string difference, bool accepted)
+        {
+            _localMovie.Path = "/tmp/Synthetic.Voyage.2026.Directors.Cut.3D-SyntheticGroup.mkv";
+            _localMovie.EditionContext = new MovieEditionContext(new MovieEdition { Id = 2, MovieId = _movie.Id }, null,
+                difference == "missing-file" ? null : new MovieFile { Id = 20 }, true);
+            _downloadClientItem.DownloadId = "synthetic-shared";
+            _downloadClientItem.DownloadClientInfo = new DownloadClientItemClientInfo { Id = 9 };
+            var grab = new MovieHistory { MovieId = _movie.Id, MovieEditionId = 2, DownloadId = "synthetic-shared",
+                Date = DateTime.UtcNow.AddDays(-1), EventType = MovieHistoryEventType.Grabbed };
+            grab.Data[MovieHistory.DOWNLOAD_CLIENT_ID] = "9";
+            var imported = new MovieHistory { MovieId = _movie.Id, MovieEditionId = difference == "edition" ? 1 : 2,
+                DownloadId = "synthetic-shared", Date = DateTime.UtcNow, EventType = MovieHistoryEventType.DownloadFolderImported };
+            if (difference != "unknown-client")
+            {
+                imported.Data[MovieHistory.DOWNLOAD_CLIENT_ID] = difference == "client" ? "10" : "9";
+            }
+
+            GivenHistory(new List<MovieHistory> { imported, grab });
+            Subject.IsSatisfiedBy(_localMovie, _downloadClientItem).Accepted.Should().Be(accepted);
         }
 
         [Test]

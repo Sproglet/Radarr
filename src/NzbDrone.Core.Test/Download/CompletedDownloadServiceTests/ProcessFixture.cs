@@ -53,7 +53,7 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
                   .Returns((DownloadClientItem item, DownloadClientItem previous) => item);
 
             Mocker.GetMock<IHistoryService>()
-                  .Setup(s => s.FindByDownloadId(_trackedDownload.DownloadItem.DownloadId))
+                  .Setup(s => s.FindByDownloadId(_trackedDownload.DownloadClient, _trackedDownload.DownloadItem.DownloadId))
                   .Returns(new List<MovieHistory>());
 
             Mocker.GetMock<IParsingService>()
@@ -72,7 +72,7 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
         private void GivenNoGrabbedHistory()
         {
             Mocker.GetMock<IHistoryService>()
-                .Setup(s => s.FindByDownloadId(_trackedDownload.DownloadItem.DownloadId))
+                .Setup(s => s.FindByDownloadId(_trackedDownload.DownloadClient, _trackedDownload.DownloadItem.DownloadId))
                 .Returns(new List<MovieHistory>());
         }
 
@@ -88,7 +88,7 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
             _trackedDownload.DownloadItem.DownloadId = "1234";
             _trackedDownload.DownloadItem.Title = "Droned Pilot"; // Set a badly named download
             Mocker.GetMock<IHistoryService>()
-                  .Setup(s => s.FindByDownloadId(It.Is<string>(i => i == "1234")))
+                  .Setup(s => s.FindByDownloadId(It.IsAny<int>(), It.Is<string>(i => i == "1234")))
                   .Returns(new List<MovieHistory>
                   {
                       new MovieHistory() { SourceTitle = "Droned S01E01", EventType = MovieHistoryEventType.Grabbed }
