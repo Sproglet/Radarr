@@ -3,6 +3,9 @@
 Run only inside a disposable SDK container with this checkout mounted at /src,
 a complete net10.0 application build, Python/ffmpeg, and no external network.
 No real client is contacted and acquisition requests to the fake APIs fail.
+The manual-ui scenario also requires a built UI copied into the application UI
+folder, Node, Playwright Core at /src/_temp/edition-browser-tools and its bundled
+headless Chromium. Install test tools before disconnecting external networking.
 """
 
 import importlib.util
@@ -232,7 +235,46 @@ def verify_manual(clients):
     print("PASS: both same-ID manual imports replace only their saved edition, settle the correct client and survive restart", flush=True)
 
 
+def verify_browser_manual(clients, before):
+    host = p.api("api/v3/config/host")
+    host.update(authenticationMethod="forms", authenticationRequired="disabledForLocalAddresses", allowedHosts="127.0.0.1,localhost",
+                username="synthetic-browser-user", password="synthetic-browser-password",
+                passwordConfirmation="synthetic-browser-password")
+    p.api("api/v3/config/host", host, "PUT")
+    p.stop()
+    p.start()
+    for client in clients:
+        label = {1: "Theatrical.IMAX", 2: "Directors.Cut.3D"}[client.number]
+        path = p.source("SyntheticBrowser." + label + ".1080p.BluRay", {1: "yellow", 2: "purple"}[client.number])
+        client.output = path.parent
+        client.mode = "completed"
+    p.command("RefreshMonitoredDownloads")
+    p.command("ProcessMonitoredDownloads")
+    records = p.api("api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true")["records"]
+    assert len(records) == 2 and all(r["trackedDownloadStatus"] == "warning" and r["status"] == "completed" for r in records), records
+    assert p.snapshot() == before
+    for client in clients:
+        previous = p.snapshot()
+        subprocess.run(["node", "/src/docs/development/verify-edition-manual-browser.cjs", str(client.client_id)], check=True)
+        current = p.snapshot()
+        assert current[client.number][0] != previous[client.number][0]
+        assert current[3 - client.number] == previous[3 - client.number]
+        terminal = [r for r in p.rows("DownloadHistory") if r["EventType"] == 2]
+        assert {(r["DownloadClientId"], r["MovieEditionId"]) for r in terminal} == ({(41, 1)} if client.number == 1 else {(41, 1), (42, 2)}), terminal
+        p.stop()
+        p.start()
+        assert p.snapshot() == current
+        p.command("RefreshMonitoredDownloads")
+        remaining = p.api("api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true")["records"]
+        assert {r["downloadClientId"] for r in remaining} == ({42} if client.number == 1 else set()), remaining
+    assert all(not c.deleted and not c.rejected for c in clients)
+    print("PASS: both browser-driven upgrades preserve the other edition/subtitle and settle only their client, across real restarts", flush=True)
+
+
 def run():
+    scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui"}:
+        raise ValueError("Unknown synthetic-client scenario: " + scenario)
     p.run()
     custom = p.api("api/v3/customformat", {"name": "Synthetic Queue Score", "includeCustomFormatWhenRenaming": False,
         "specifications": [{"name": "Synthetic Match", "implementation": "ReleaseTitleSpecification", "negate": False,
@@ -250,8 +292,7 @@ def run():
     clients = [SyntheticSab(1), SyntheticSab(2)]
     SERVERS.extend(clients)
     seed(clients, secondary["id"])
-    scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario == "completed":
+    if scenario in ("completed", "manual-ui"):
         with sqlite3.connect(p.CONFIG / "radarr.db") as db:
             for file in p.rows("MovieFiles"):
                 quality = json.loads(file["Quality"])
@@ -270,6 +311,9 @@ def run():
     assert {k: r["id"] for k, r in restored.items()} == {k: r["id"] for k, r in first.items()}
     assert p.snapshot() == before
     print("PASS: both assignments and client-specific queue IDs survive an application process restart and rule edits", flush=True)
+    if scenario == "manual-ui":
+        verify_browser_manual(clients, before)
+        return
     if scenario == "manual":
         verify_manual(clients)
         return
