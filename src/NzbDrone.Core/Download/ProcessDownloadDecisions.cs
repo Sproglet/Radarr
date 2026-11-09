@@ -8,6 +8,7 @@ using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Download
 {
@@ -38,10 +39,16 @@ namespace NzbDrone.Core.Download
         public async Task<ProcessedDecisions> ProcessDecisions(List<DownloadDecision> decisions)
         {
             var qualifiedReports = GetQualifiedReports(decisions);
+            var conflicts = qualifiedReports.Where(a => qualifiedReports.Any(b =>
+                ReleaseIdentity.Matches(a.RemoteMovie.Release, b.RemoteMovie.Release) &&
+                (a.RemoteMovie.Movie.Id != b.RemoteMovie.Movie.Id || a.RemoteMovie.EditionContext?.Edition.Id != b.RemoteMovie.EditionContext?.Edition.Id))).ToHashSet();
+            qualifiedReports = qualifiedReports.Where(d => !conflicts.Contains(d)).ToList();
             var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisionsForMovies(qualifiedReports);
             var grabbed = new List<DownloadDecision>();
             var pending = new List<DownloadDecision>();
             var rejected = decisions.Where(d => d.Rejected).ToList();
+            rejected.AddRange(conflicts.Select(d => new DownloadDecision(d.RemoteMovie,
+                new DownloadRejection(DownloadRejectionReason.DecisionError, "The same release has conflicting target assignments; manual review required."))));
 
             var pendingAddQueue = new List<Tuple<DownloadDecision, PendingReleaseReason>>();
 
@@ -53,7 +60,7 @@ namespace NzbDrone.Core.Download
                 var downloadProtocol = report.RemoteMovie.Release.DownloadProtocol;
 
                 // Skip if already grabbed
-                if (IsMovieProcessed(grabbed, report))
+                if (AlreadyProcessed(grabbed, report))
                 {
                     continue;
                 }
@@ -164,25 +171,24 @@ namespace NzbDrone.Core.Download
             return (decision.Approved || decision.TemporarilyRejected) && decision.RemoteMovie.Movie != null;
         }
 
-        private bool IsMovieProcessed(List<DownloadDecision> decisions, DownloadDecision report)
+        private bool AlreadyProcessed(List<DownloadDecision> decisions, DownloadDecision report)
         {
             var movieId = report.RemoteMovie.Movie.Id;
 
-            return decisions.Select(r => r.RemoteMovie.Movie)
-                            .Select(e => e.Id)
-                            .ToList()
-                            .Contains(movieId);
+            return decisions.Any(r =>
+                (r.RemoteMovie.Movie.Id == movieId && r.RemoteMovie.EditionContext?.Edition.Id == report.RemoteMovie.EditionContext?.Edition.Id) ||
+                ReleaseIdentity.Matches(r.RemoteMovie.Release, report.RemoteMovie.Release));
         }
 
         private void PreparePending(List<Tuple<DownloadDecision, PendingReleaseReason>> queue, List<DownloadDecision> grabbed, List<DownloadDecision> pending, DownloadDecision report, PendingReleaseReason reason)
         {
-            // If a release was already grabbed with a matching movie we should store it as a fallback
+            // If a release was already grabbed for this edition we should store it as a fallback
             // and filter it out the next time it is processed.
             // If a higher quality release failed to add to the download client, but a lower quality release
             // was sent to another client we still list it normally so it apparent that it'll grab next time.
             // Delayed is treated the same, but only the first is listed the subsequent items as stored as Fallback.
-            if (IsMovieProcessed(grabbed, report) ||
-                IsMovieProcessed(pending, report))
+            if (AlreadyProcessed(grabbed, report) ||
+                AlreadyProcessed(pending, report))
             {
                 reason = PendingReleaseReason.Fallback;
             }

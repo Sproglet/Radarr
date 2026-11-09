@@ -19,7 +19,9 @@ namespace NzbDrone.Core.Download.TrackedDownloads
     public interface ITrackedDownloadService
     {
         TrackedDownload Find(string downloadId);
+        TrackedDownload Find(int downloadClientId, string downloadId);
         void StopTracking(string downloadId);
+        void StopTracking(int downloadClientId, string downloadId);
         void StopTracking(List<string> downloadIds);
         TrackedDownload TrackDownload(DownloadClientDefinition downloadClient, DownloadClientItem downloadItem);
         List<TrackedDownload> GetTrackedDownloads();
@@ -40,6 +42,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
+        private readonly IMovieEditionRecoveryService _editionRecovery;
 
         private readonly ICached<TrackedDownload> _cache;
 
@@ -50,6 +53,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                                       ICustomFormatCalculationService formatCalculator,
                                       IEventAggregator eventAggregator,
                                       ICacheManager cacheManager,
+                                      IMovieEditionRecoveryService editionRecovery,
                                       Logger logger)
         {
             _parsingService = parsingService;
@@ -59,43 +63,71 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             _formatCalculator = formatCalculator;
             _eventAggregator = eventAggregator;
             _logger = logger;
+            _editionRecovery = editionRecovery;
 
             _cache = cacheManager.GetCache<TrackedDownload>(GetType());
         }
 
+        private static string CacheKey(int clientId, string downloadId) => $"{clientId}:{downloadId}";
+
+        public TrackedDownload Find(int downloadClientId, string downloadId)
+        {
+            return _cache.Find(CacheKey(downloadClientId, downloadId));
+        }
+
         public TrackedDownload Find(string downloadId)
         {
-            return _cache.Find(downloadId);
+            var matches = _cache.Values.Where(t => t.DownloadItem.DownloadId == downloadId).ToList();
+            if (matches.Count > 1)
+            {
+                throw new InvalidOperationException("Download ID exists on multiple clients. Select a client-specific queue item.");
+            }
+
+            return matches.SingleOrDefault();
+        }
+
+        public void StopTracking(int downloadClientId, string downloadId)
+        {
+            var tracked = Find(downloadClientId, downloadId);
+            if (tracked != null)
+            {
+                _cache.Remove(CacheKey(downloadClientId, downloadId));
+                _eventAggregator.PublishEvent(new TrackedDownloadsRemovedEvent(new List<TrackedDownload> { tracked }));
+            }
         }
 
         public void StopTracking(string downloadId)
         {
-            var trackedDownload = _cache.Find(downloadId);
-
-            _cache.Remove(downloadId);
-            _eventAggregator.PublishEvent(new TrackedDownloadsRemovedEvent(new List<TrackedDownload> { trackedDownload }));
+            var tracked = Find(downloadId);
+            if (tracked != null)
+            {
+                StopTracking(tracked.DownloadClient, downloadId);
+            }
         }
 
         public void StopTracking(List<string> downloadIds)
         {
-            var trackedDownloads = new List<TrackedDownload>();
-
-            foreach (var downloadId in downloadIds)
+            // Resolve the entire request before changing the cache; ambiguity must not partially remove work.
+            var tracked = downloadIds.Distinct().Select(Find).Where(t => t != null).ToList();
+            foreach (var item in tracked)
             {
-                var trackedDownload = _cache.Find(downloadId);
-
-                _cache.Remove(downloadId);
-                trackedDownloads.Add(trackedDownload);
+                _cache.Remove(CacheKey(item.DownloadClient, item.DownloadItem.DownloadId));
             }
 
-            _eventAggregator.PublishEvent(new TrackedDownloadsRemovedEvent(trackedDownloads));
+            _eventAggregator.PublishEvent(new TrackedDownloadsRemovedEvent(tracked));
         }
 
         public TrackedDownload TrackDownload(DownloadClientDefinition downloadClient, DownloadClientItem downloadItem)
         {
-            var existingItem = Find(downloadItem.DownloadId);
+            return TrackDownload(downloadClient, downloadItem, false);
+        }
 
-            if (existingItem != null && existingItem.State != TrackedDownloadState.Downloading)
+        private TrackedDownload TrackDownload(DownloadClientDefinition downloadClient, DownloadClientItem downloadItem, bool refresh)
+        {
+            var existingItem = Find(downloadClient.Id, downloadItem.DownloadId);
+
+            if (!refresh && existingItem != null && existingItem.State != TrackedDownloadState.Downloading &&
+                existingItem.RemoteMovie?.EditionContext == null && existingItem.EditionRecoveryError == null)
             {
                 LogItemChange(existingItem, existingItem.DownloadItem, downloadItem);
 
@@ -124,23 +156,40 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                     trackedDownload.State = state;
                 }
 
+                var historyItems = _historyService.FindByDownloadId(downloadItem.DownloadId).OrderByDescending(h => h.Date).ToList();
+                var grabbedEvent = historyItems.FirstOrDefault(h => h.EventType == MovieHistoryEventType.Grabbed);
+                var downloadGrab = _downloadHistoryService.GetLatestGrab(downloadItem.DownloadId) ??
+                    (downloadHistory?.EventType == DownloadHistoryEventType.DownloadGrabbed ? downloadHistory : null);
+                if (downloadGrab?.MovieEditionId != null &&
+                    (downloadGrab.DownloadClientId != downloadClient.Id ||
+                     (downloadHistory != null && (downloadHistory.DownloadClientId != downloadClient.Id ||
+                         downloadHistory.MovieId != downloadGrab.MovieId ||
+                         (downloadHistory.MovieEditionId.HasValue && downloadHistory.MovieEditionId != downloadGrab.MovieEditionId)))))
+                {
+                    trackedDownload.EditionRecoveryError = "Persisted edition history is inconsistent or belongs to another download client; manual review required.";
+                    trackedDownload.State = TrackedDownloadState.ImportBlocked;
+                    trackedDownload.Warn(trackedDownload.EditionRecoveryError);
+                    _cache.Set(CacheKey(downloadClient.Id, downloadItem.DownloadId), trackedDownload);
+                    return trackedDownload;
+                }
+
+                int? assignedMovieId = grabbedEvent?.MovieEditionId != null ? grabbedEvent.MovieId :
+                    downloadGrab?.MovieEditionId != null ? downloadGrab.MovieId : null;
                 var parsedMovieInfo = Parser.Parser.ParseMovieTitle(trackedDownload.DownloadItem.Title);
+                var clientEvidence = parsedMovieInfo;
 
                 if (parsedMovieInfo != null)
                 {
-                    trackedDownload.RemoteMovie = downloadHistory is { EventType: DownloadHistoryEventType.DownloadImported }
+                    trackedDownload.RemoteMovie = assignedMovieId.HasValue
+                        ? _parsingService.Map(parsedMovieInfo, assignedMovieId.Value)
+                        : downloadHistory is { EventType: DownloadHistoryEventType.DownloadImported }
                         ? _parsingService.Map(parsedMovieInfo, downloadHistory.MovieId)
                         : _parsingService.Map(parsedMovieInfo, "", 0, null);
                 }
 
-                var historyItems = _historyService.FindByDownloadId(downloadItem.DownloadId)
-                    .OrderByDescending(h => h.Date)
-                    .ToList();
-
                 if (historyItems.Any())
                 {
                     var firstHistoryItem = historyItems.First();
-                    var grabbedEvent = historyItems.FirstOrDefault(v => v.EventType == MovieHistoryEventType.Grabbed);
 
                     trackedDownload.Indexer = grabbedEvent?.Data?.GetValueOrDefault("indexer");
                     trackedDownload.Added = grabbedEvent?.Date;
@@ -148,12 +197,12 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                     if (parsedMovieInfo == null ||
                         trackedDownload.RemoteMovie?.Movie == null)
                     {
-                        parsedMovieInfo = Parser.Parser.ParseMovieTitle(firstHistoryItem.SourceTitle);
+                        parsedMovieInfo = Parser.Parser.ParseMovieTitle(grabbedEvent?.SourceTitle ?? firstHistoryItem.SourceTitle);
 
                         if (parsedMovieInfo != null)
                         {
                             trackedDownload.RemoteMovie = _parsingService.Map(parsedMovieInfo,
-                                firstHistoryItem.MovieId);
+                                assignedMovieId ?? firstHistoryItem.MovieId);
                         }
                     }
 
@@ -175,12 +224,58 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                     }
                 }
 
-                if (trackedDownload.RemoteMovie != null)
+                if (trackedDownload.RemoteMovie?.Movie == null && downloadGrab != null)
                 {
+                    var original = Parser.Parser.ParseMovieTitle(downloadGrab.SourceTitle);
+                    if (original != null)
+                    {
+                        trackedDownload.RemoteMovie = _parsingService.Map(original, downloadGrab.MovieId);
+                    }
+                }
+
+                if (trackedDownload.RemoteMovie?.Movie != null)
+                {
+                    if (downloadGrab?.MovieEditionId != null && downloadGrab.Release != null)
+                    {
+                        // Queue deduplication needs the original indexer GUID/hash after restart.
+                        trackedDownload.RemoteMovie.Release = downloadGrab.Release;
+                        trackedDownload.RemoteMovie.Release.IndexerId = downloadGrab.IndexerId;
+                        trackedDownload.RemoteMovie.Release.DownloadProtocol = downloadGrab.Protocol;
+                    }
+
+                    try
+                    {
+                        trackedDownload.RemoteMovie.EditionContext = _editionRecovery.Recover(trackedDownload.RemoteMovie.Movie, grabbedEvent, downloadGrab);
+                        _editionRecovery.ValidateEvidence(trackedDownload.RemoteMovie.EditionContext, clientEvidence);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Debug(ex, "Edition recovery failed for {0}", downloadItem.DownloadId);
+                        if (trackedDownload.State is TrackedDownloadState.Imported or TrackedDownloadState.Failed or TrackedDownloadState.Ignored)
+                        {
+                            // Historical completion survives later target removal; never turn
+                            // a terminal download back into an import candidate.
+                            trackedDownload.RemoteMovie.EditionContext = null;
+                        }
+                        else
+                        {
+                            trackedDownload.EditionRecoveryError = ex.Message;
+                            trackedDownload.RemoteMovie.EditionRecoveryError = ex.Message;
+                            trackedDownload.State = TrackedDownloadState.ImportBlocked;
+                            trackedDownload.Warn(ex.Message);
+                        }
+                    }
+
                     _aggregationService.Augment(trackedDownload.RemoteMovie);
 
                     // Calculate custom formats
                     trackedDownload.RemoteMovie.CustomFormats = _formatCalculator.ParseCustomFormat(trackedDownload.RemoteMovie, downloadItem.TotalSize);
+                    trackedDownload.RemoteMovie.CustomFormatScore = trackedDownload.RemoteMovie.EffectiveQualityProfile?.CalculateCustomFormatScore(trackedDownload.RemoteMovie.CustomFormats) ?? 0;
+                    if (existingItem != null && trackedDownload.EditionRecoveryError == null &&
+                        (downloadHistory == null || downloadHistory.EventType == DownloadHistoryEventType.DownloadGrabbed))
+                    {
+                        trackedDownload.State = existingItem.State;
+                    }
                 }
 
                 // Track it so it can be displayed in the queue even though we can't determine which movie it is for
@@ -204,7 +299,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
             LogItemChange(trackedDownload, existingItem?.DownloadItem, trackedDownload.DownloadItem);
 
-            _cache.Set(trackedDownload.DownloadItem.DownloadId, trackedDownload);
+            _cache.Set(CacheKey(trackedDownload.DownloadClient, trackedDownload.DownloadItem.DownloadId), trackedDownload);
             return trackedDownload;
         }
 
@@ -215,7 +310,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
         public void UpdateTrackable(List<TrackedDownload> trackedDownloads)
         {
-            var untrackable = GetTrackedDownloads().ExceptBy(t => t.DownloadItem.DownloadId, trackedDownloads, t => t.DownloadItem.DownloadId, StringComparer.CurrentCulture).ToList();
+            var untrackable = GetTrackedDownloads().Where(t => !trackedDownloads.Any(active => active.DownloadClient == t.DownloadClient && active.DownloadItem.DownloadId == t.DownloadItem.DownloadId)).ToList();
 
             foreach (var trackedDownload in untrackable)
             {
@@ -243,11 +338,16 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
         private void UpdateCachedItem(TrackedDownload trackedDownload)
         {
-            var parsedMovieInfo = Parser.Parser.ParseMovieTitle(trackedDownload.DownloadItem.Title);
+            var refreshed = TrackDownload(new DownloadClientDefinition { Id = trackedDownload.DownloadClient, Protocol = trackedDownload.Protocol }, trackedDownload.DownloadItem, true);
+            trackedDownload.RemoteMovie = refreshed.RemoteMovie;
+            trackedDownload.EditionRecoveryError = refreshed.EditionRecoveryError;
+            trackedDownload.State = refreshed.State;
+            if (refreshed.EditionRecoveryError != null)
+            {
+                trackedDownload.Warn(refreshed.EditionRecoveryError);
+            }
 
-            trackedDownload.RemoteMovie = parsedMovieInfo == null ? null : _parsingService.Map(parsedMovieInfo, "", 0, null);
-
-            _aggregationService.Augment(trackedDownload.RemoteMovie);
+            _cache.Set(CacheKey(trackedDownload.DownloadClient, trackedDownload.DownloadItem.DownloadId), trackedDownload);
         }
 
         private static TrackedDownloadState GetStateFromHistory(DownloadHistoryEventType eventType)
@@ -272,13 +372,13 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                 return;
             }
 
-            var trackedDownload = _cache.Find(message.DownloadId);
+            var trackedDownload = Find(message.DownloadClientId, message.DownloadId);
 
             if (trackedDownload is { State: TrackedDownloadState.Imported or
                                             TrackedDownloadState.Failed or
                                             TrackedDownloadState.Ignored })
             {
-                _cache.Remove(message.DownloadId);
+                _cache.Remove(CacheKey(message.DownloadClientId, message.DownloadId));
             }
         }
 

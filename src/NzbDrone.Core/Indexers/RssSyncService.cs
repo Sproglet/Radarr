@@ -7,6 +7,7 @@ using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Indexers
 {
@@ -41,7 +42,9 @@ namespace NzbDrone.Core.Indexers
             var rssReleases = await _rssFetcherAndParser.Fetch();
             var pendingReleases = _pendingReleaseService.GetPending();
 
-            var reports = rssReleases.Concat(pendingReleases).ToList();
+            // Saved intent wins over today's classification of the same indexer release.
+            var reports = pendingReleases.Concat(rssReleases.Where(r =>
+                !pendingReleases.Any(p => ReleaseIdentity.Matches(p, r)))).ToList();
             var decisions = _downloadDecisionMaker.GetRssDecision(reports);
             var processed = await _processDownloadDecisions.ProcessDecisions(decisions);
 

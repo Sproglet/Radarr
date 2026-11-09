@@ -127,6 +127,20 @@ namespace NzbDrone.Core.Movies
                 return Match(result, customMatches, "User-defined edition rules.");
             }
 
+            result = ParseEvidence(parsedLabel, presentationEvidence, true);
+            if (result.Status != EditionClassificationStatus.Matched)
+            {
+                return result;
+            }
+
+            var candidates = editions.Where(e => (e.MatchRules == null || e.MatchRules.Count == 0) &&
+                e.Attributes.Count == result.Attributes.Count && result.Attributes.All(a => e.Attributes.TryGetValue(a.Key, out var value) && value == a.Value)).ToList();
+            return Match(result, candidates, "Built-in attribute combination.");
+        }
+
+        public static EditionClassification ParseEvidence(string parsedLabel, string presentationEvidence, bool defaultMissingCut)
+        {
+            var result = new EditionClassification { ParsedLabel = parsedLabel };
             var label = parsedLabel ?? string.Empty;
             var presentation = presentationEvidence ?? string.Empty;
             if (label.Length + presentation.Length > 16384)
@@ -158,10 +172,12 @@ namespace NzbDrone.Core.Movies
                 return Finish(result, EditionClassificationStatus.Unconfigured, "Unmapped edition label.");
             }
 
-            result.Attributes.TryAdd("cut", "theatrical");
-            var candidates = editions.Where(e => (e.MatchRules == null || e.MatchRules.Count == 0) &&
-                e.Attributes.Count == result.Attributes.Count && result.Attributes.All(a => e.Attributes.TryGetValue(a.Key, out var value) && value == a.Value)).ToList();
-            return Match(result, candidates, "Built-in attribute combination.");
+            if (defaultMissingCut)
+            {
+                result.Attributes.TryAdd("cut", "theatrical");
+            }
+
+            return Finish(result, EditionClassificationStatus.Matched, "Parsed attribute evidence.");
         }
 
         private static EditionClassification Match(EditionClassification result, List<MovieEdition> candidates, string reason)

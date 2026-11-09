@@ -30,14 +30,14 @@ namespace NzbDrone.Core.Test.Download.FailedDownloadServiceTests
                                                     .With(h => h.Title = "Drone.S01E01.HDTV")
                                                     .Build();
 
-            _grabHistory = Builder<MovieHistory>.CreateListOfSize(2).BuildList();
+            _grabHistory = Builder<MovieHistory>.CreateListOfSize(2).All().With(h => h.MovieEditionId = null).With(h => h.EditionRuleRevision = null).BuildList();
 
             var remoteMovie = new RemoteMovie
             {
                 Movie = new Movie()
             };
 
-            _trackedDownload = Builder<TrackedDownload>.CreateNew()
+            _trackedDownload = Builder<TrackedDownload>.CreateNew().With(t => t.EditionRecoveryError = null)
                     .With(c => c.State = TrackedDownloadState.FailedPending)
                     .With(c => c.DownloadItem = completed)
                     .With(c => c.RemoteMovie = remoteMovie)

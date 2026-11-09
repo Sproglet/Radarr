@@ -1,16 +1,25 @@
-using System.Collections.Generic;
-using System.Linq;
 using FluentAssertions;
 using Moq;
 using NUnit.Framework;
-using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.Blocklisting;
+using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.DecisionEngine.Specifications.RssSync;
 using NzbDrone.Core.DecisionEngine.Specifications;
+using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.History;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Movies;
-using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Profiles.Delay;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Qualities;
+using NzbDrone.Core.Queue;
 using NzbDrone.Core.Test.Framework;
 using NzbDrone.Test.Common;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace NzbDrone.Core.Test.DecisionEngineTests
 {
@@ -89,13 +98,13 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
             _reports[0].Title = "Synthetic.Voyage.2026.IMAX.1080p.BluRay-SyntheticGroup";
             Mocker.GetMock<IMovieEditionRepository>().Setup(r => r.GetByMovie(_remoteMovie.Movie.Id))
                 .Returns(new List<MovieEdition> { new MovieEdition { Id = 1 }, new MovieEdition { Id = 2 } });
-            Mocker.GetMock<NzbDrone.Core.CustomFormats.ICustomFormatCalculationService>()
+            Mocker.GetMock<ICustomFormatCalculationService>()
                 .Setup(f => f.ParseCustomFormat(It.IsAny<RemoteMovie>(), It.IsAny<long>()))
-                .Returns(new List<NzbDrone.Core.CustomFormats.CustomFormat>());
+                .Returns(new List<CustomFormat>());
             var evaluation = new MovieEditionEvaluation
             {
                 Classification = new EditionClassification { Status = EditionClassificationStatus.Matched },
-                Context = new MovieEditionContext(new MovieEdition { Id = 2 }, new NzbDrone.Core.Profiles.Qualities.QualityProfile { MinFormatScore = 200 }, null, true),
+                Context = new MovieEditionContext(new MovieEdition { Id = 2 }, new QualityProfile { MinFormatScore = 200 }, null, true),
                 CustomFormatScore = 123
             };
             Mocker.GetMock<IMovieEditionEvaluationService>().Setup(e => e.PreviewParsed(_remoteMovie)).Returns(evaluation);
@@ -110,6 +119,57 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
             decision.Rejections.Should().Contain(r => r.Reason == DownloadRejectionReason.CustomFormatMinimumScore);
             decision.RemoteMovie.DownloadAllowed.Should().BeFalse();
             _pass1.Verify(p => p.IsSatisfiedBy(It.IsAny<RemoteMovie>(), It.IsAny<ReleaseDecisionInformation>()), Times.Never());
+        }
+
+        [Test]
+        public void edition_preview_runs_queue_history_and_delay_checks_with_acquisition_still_disabled()
+        {
+            _reports[0].Title = "Synthetic.Voyage.2026.IMAX.1080p.BluRay-SyntheticGroup";
+            _reports[0].PublishDate = System.DateTime.UtcNow;
+            var profile = new QualityProfile
+            {
+                Items = Qualities.QualityFixture.GetDefaultQualities(), Cutoff = Quality.Bluray1080p.Id, UpgradeAllowed = true
+            };
+            var quality = new QualityModel(Quality.Bluray1080p);
+            _remoteMovie.ParsedMovieInfo.Quality = quality;
+            var context = new MovieEditionContext(new MovieEdition { Id = 2 }, profile, null, true);
+            Mocker.GetMock<IMovieEditionRepository>().Setup(r => r.GetByMovie(_remoteMovie.Movie.Id))
+                .Returns(new List<MovieEdition> { new MovieEdition { Id = 1 }, context.Edition });
+            Mocker.GetMock<IMovieEditionEvaluationService>().Setup(e => e.PreviewParsed(_remoteMovie)).Returns(new MovieEditionEvaluation
+            {
+                Classification = new EditionClassification { Status = EditionClassificationStatus.Matched }, Context = context, CustomFormatScore = 0
+            });
+            Mocker.GetMock<ICustomFormatCalculationService>()
+                .Setup(s => s.ParseCustomFormat(It.IsAny<RemoteMovie>(), It.IsAny<long>())).Returns(new List<CustomFormat>());
+            Mocker.GetMock<ICustomFormatCalculationService>()
+                .Setup(s => s.ParseCustomFormat(It.IsAny<MovieHistory>(), It.IsAny<Movie>())).Returns(new List<CustomFormat>());
+            Mocker.GetMock<IQueueService>().Setup(s => s.GetQueue()).Returns(new List<Queue.Queue>
+            {
+                new Queue.Queue { RemoteMovie = new RemoteMovie { Movie = _remoteMovie.Movie, EditionContext = context, ParsedMovieInfo = new ParsedMovieInfo { Quality = quality } } }
+            });
+            Mocker.GetMock<IHistoryService>().Setup(s => s.MostRecentForEdition(_remoteMovie.Movie.Id, 2)).Returns(new MovieHistory
+            {
+                EventType = MovieHistoryEventType.Grabbed, Quality = quality, Date = System.DateTime.UtcNow
+            });
+            Mocker.GetMock<IDelayProfileService>().Setup(s => s.BestForTags(It.IsAny<HashSet<int>>()))
+                .Returns(new DelayProfile { UsenetDelay = 120 });
+            _reports[0].DownloadProtocol = DownloadProtocol.Usenet;
+            Mocker.SetConstant<IEnumerable<IDownloadDecisionEngineSpecification>>(new IDownloadDecisionEngineSpecification[]
+            {
+                Mocker.Resolve<QueueSpecification>(),
+                Mocker.Resolve<BlocklistSpecification>(),
+                Mocker.Resolve<HistorySpecification>(),
+                Mocker.Resolve<DelaySpecification>()
+            });
+            Mocker.GetMock<IBlocklistService>().Setup(s => s.Blocklisted(It.IsAny<int>(), It.IsAny<ReleaseInfo>())).Returns(true);
+
+            var decision = Subject.GetRssDecision(_reports).Single();
+            decision.Rejections.Select(r => r.Reason).Should().Contain(new[]
+            {
+                DownloadRejectionReason.MultiEditionAcquisitionDisabled, DownloadRejectionReason.QueueCutoffMet,
+                DownloadRejectionReason.HistoryRecentCutoffMet, DownloadRejectionReason.MinimumAgeDelay, DownloadRejectionReason.Blocklisted
+            });
+            decision.RemoteMovie.DownloadAllowed.Should().BeFalse();
         }
 
         private void GivenSpecifications(params Mock<IDownloadDecisionEngineSpecification>[] mocks)

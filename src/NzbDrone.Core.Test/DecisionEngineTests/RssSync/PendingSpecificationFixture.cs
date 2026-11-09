@@ -47,7 +47,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests.RssSync
                 .With(s => s.Id = 2)
                 .Build();
 
-            _remoteMovie = Builder<RemoteMovie>.CreateNew()
+            _remoteMovie = Builder<RemoteMovie>.CreateNew().With(r => r.EditionRecoveryError = null)
                 .With(r => r.Movie = _movie)
                 .With(r => r.ParsedMovieInfo = new ParsedMovieInfo { Quality = new QualityModel(Quality.DVD), Languages = new List<Language> { Language.Spanish } })
                 .With(r => r.CustomFormats = new List<CustomFormat>())

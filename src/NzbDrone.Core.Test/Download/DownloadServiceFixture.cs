@@ -41,9 +41,29 @@ namespace NzbDrone.Core.Test.Download
                 .Build();
 
             _parseResult = Builder<RemoteMovie>.CreateNew()
+                   .With(c => c.EditionRecoveryError = null)
                    .With(c => c.Movie = Builder<Movie>.CreateNew().Build())
                    .With(c => c.Release = releaseInfo)
                    .Build();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void edition_or_failed_recovery_cannot_reach_download_client(bool recoveryFailure)
+        {
+            _parseResult.Release.Title = "Synthetic.Voyage.2026.1080p.BluRay-SyntheticGroup";
+            if (recoveryFailure)
+            {
+                _parseResult.EditionRecoveryError = "Synthetic assignment needs review";
+            }
+            else
+            {
+                _parseResult.EditionContext = new MovieEditionContext(new MovieEdition { Id = 2 }, null, null, true);
+            }
+
+            Assert.ThrowsAsync<InvalidOperationException>(() => Subject.DownloadReport(_parseResult, null));
+            Mocker.GetMock<IProvideDownloadClient>().Verify(s => s.GetDownloadClient(It.IsAny<DownloadProtocol>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<HashSet<int>>()), Times.Never());
+            VerifyEventNotPublished<MovieGrabbedEvent>();
         }
 
         private Mock<IDownloadClient> WithUsenetClient()

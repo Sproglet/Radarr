@@ -37,14 +37,22 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         public DownloadSpecDecision IsSatisfiedBy(RemoteMovie subject, ReleaseDecisionInformation information)
         {
             var queue = _queueService.GetQueue();
+            if (queue.Any(q => q.TrackedDownloadState != TrackedDownloadState.FailedPending &&
+                ReleaseIdentity.Matches(q.RemoteMovie?.Release, subject.Release)))
+            {
+                return DownloadSpecDecision.Reject(DownloadRejectionReason.QueueHigherPreference, "This release is already queued, independently of its edition assignment");
+            }
+
             var matchingMovies = queue.Where(q => q.RemoteMovie?.Movie != null &&
-                                                   q.RemoteMovie.Movie.Id == subject.Movie.Id)
+                                                   q.RemoteMovie.Movie.Id == subject.Movie.Id &&
+                                                   q.RemoteMovie.EditionRecoveryError == null &&
+                                                   q.RemoteMovie.EditionContext?.Edition.Id == subject.EditionContext?.Edition.Id)
                                        .ToList();
 
             foreach (var queueItem in matchingMovies)
             {
                 var remoteMovie = queueItem.RemoteMovie;
-                var qualityProfile = subject.Movie.QualityProfile;
+                var qualityProfile = subject.EffectiveQualityProfile;
 
                 // To avoid a race make sure it's not FailedPending (failed awaiting removal/search).
                 // Failed items (already searching for a replacement) won't be part of the queue since

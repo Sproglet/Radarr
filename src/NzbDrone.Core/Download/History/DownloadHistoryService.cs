@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies.Events;
+using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Download.History
 {
@@ -104,7 +106,7 @@ namespace NzbDrone.Core.Download.History
                 EventType = DownloadHistoryEventType.DownloadGrabbed,
                 MovieId = message.Movie.Movie.Id,
                 MovieEditionId = message.Movie.EditionContext?.Edition.Id,
-                EditionRuleRevision = message.Movie.EditionContext?.Edition.RuleRevision,
+                EditionRuleRevision = message.Movie.EditionEvaluation?.Classification?.RuleRevision ?? message.Movie.EditionContext?.Edition.RuleRevision,
                 DownloadId = message.DownloadId,
                 SourceTitle = message.Movie.Release.Title,
                 Date = DateTime.UtcNow,
@@ -167,6 +169,26 @@ namespace NzbDrone.Core.Download.History
             _repository.Insert(history);
         }
 
+        private void CopyGrabIdentity(DownloadHistory history, RemoteMovie remoteMovie)
+        {
+            var grab = history.DownloadId.IsNullOrWhiteSpace() ? null : GetLatestGrab(history.DownloadId);
+            if (grab != null && grab.MovieId == history.MovieId && grab.DownloadClientId == history.DownloadClientId)
+            {
+                history.MovieEditionId = grab.MovieEditionId;
+                history.EditionRuleRevision = grab.EditionRuleRevision;
+                if (grab.Data != null && grab.Data.TryGetValue("movieEditionName", out var name))
+                {
+                    history.Data["movieEditionName"] = name;
+                }
+            }
+            else if (remoteMovie?.EditionContext != null && remoteMovie.Movie.Id == history.MovieId)
+            {
+                history.MovieEditionId = remoteMovie.EditionContext.Edition.Id;
+                history.EditionRuleRevision = remoteMovie.EditionContext.Edition.RuleRevision;
+                history.Data["movieEditionName"] = remoteMovie.EditionContext.Edition.Name;
+            }
+        }
+
         public void Handle(DownloadCompletedEvent message)
         {
             var downloadItem = message.TrackedDownload.DownloadItem;
@@ -185,15 +207,19 @@ namespace NzbDrone.Core.Download.History
             history.Data.Add("DownloadClient", downloadItem.DownloadClientInfo.Type);
             history.Data.Add("DownloadClientName", downloadItem.DownloadClientInfo.Name);
 
+            CopyGrabIdentity(history, message.TrackedDownload?.RemoteMovie);
             _repository.Insert(history);
         }
 
         public void Handle(DownloadFailedEvent message)
         {
-            // Don't track failed download for an unknown download
-            if (message.TrackedDownload == null)
+            var clientId = message.DownloadClientId ?? message.TrackedDownload?.DownloadClient;
+            var grab = message.DownloadId.IsNullOrWhiteSpace() ? null : GetLatestGrab(message.DownloadId);
+            if (message.TrackedDownload == null &&
+                (!clientId.HasValue || grab == null || grab.MovieId != message.MovieId || grab.DownloadClientId != clientId ||
+                    grab.MovieEditionId != message.MovieEditionId))
             {
-                return;
+                return; // History-only failures need positive client/target provenance.
             }
 
             var history = new DownloadHistory
@@ -203,13 +229,14 @@ namespace NzbDrone.Core.Download.History
                 DownloadId = message.DownloadId,
                 SourceTitle = message.SourceTitle,
                 Date = DateTime.UtcNow,
-                Protocol = message.TrackedDownload.Protocol,
-                DownloadClientId = message.TrackedDownload.DownloadClient
+                Protocol = message.TrackedDownload?.Protocol ?? grab.Protocol,
+                DownloadClientId = clientId.Value
             };
 
-            history.Data.Add("DownloadClient", message.TrackedDownload.DownloadItem.DownloadClientInfo.Type);
-            history.Data.Add("DownloadClientName", message.TrackedDownload.DownloadItem.DownloadClientInfo.Name);
+            history.Data.Add("DownloadClient", message.TrackedDownload?.DownloadItem.DownloadClientInfo.Type ?? message.DownloadClient);
+            history.Data.Add("DownloadClientName", message.TrackedDownload?.DownloadItem.DownloadClientInfo.Name ?? message.Data.GetValueOrDefault("downloadClientName"));
 
+            CopyGrabIdentity(history, message.TrackedDownload?.RemoteMovie);
             _repository.Insert(history);
         }
 
@@ -229,6 +256,7 @@ namespace NzbDrone.Core.Download.History
             history.Data.Add("DownloadClient", message.DownloadClientInfo.Type);
             history.Data.Add("DownloadClientName", message.DownloadClientInfo.Name);
 
+            CopyGrabIdentity(history, message.TrackedDownload?.RemoteMovie);
             _repository.Insert(history);
         }
 

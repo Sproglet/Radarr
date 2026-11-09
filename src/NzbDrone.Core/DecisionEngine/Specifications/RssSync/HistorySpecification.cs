@@ -41,12 +41,14 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
             }
 
             var cdhEnabled = _configService.EnableCompletedDownloadHandling;
-            var qualityProfile = subject.Movie.QualityProfile;
+            var qualityProfile = subject.EffectiveQualityProfile;
 
             _logger.Debug("Performing history status check on report");
 
             _logger.Debug("Checking current status of movie [{0}] in history", subject.Movie.Id);
-            var mostRecent = _historyService.MostRecentForMovie(subject.Movie.Id);
+            var mostRecent = subject.EditionContext == null
+                ? _historyService.MostRecentForMovie(subject.Movie.Id)
+                : _historyService.MostRecentForEdition(subject.Movie.Id, subject.EditionContext.Edition.Id);
 
             if (mostRecent != null && mostRecent.EventType == MovieHistoryEventType.Grabbed)
             {
@@ -60,13 +62,13 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
                 var customFormats = _formatService.ParseCustomFormat(mostRecent, subject.Movie);
 
                 var cutoffUnmet = _upgradableSpecification.CutoffNotMet(
-                    subject.Movie.QualityProfile,
+                    qualityProfile,
                     mostRecent.Quality,
                     customFormats,
                     subject.ParsedMovieInfo.Quality);
 
                 var upgradeableRejectReason = _upgradableSpecification.IsUpgradable(
-                    subject.Movie.QualityProfile,
+                    qualityProfile,
                     mostRecent.Quality,
                     customFormats,
                     subject.ParsedMovieInfo.Quality,

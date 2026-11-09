@@ -322,7 +322,7 @@ namespace NzbDrone.Core.Test.Download.TrackedDownloads
             var imported = Subject.TrackDownload(client, item);
             imported.State.Should().Be(TrackedDownloadState.Imported);
 
-            Subject.Handle(new MovieGrabbedEvent(remoteMovie) { DownloadId = "35238" });
+            Subject.Handle(new MovieGrabbedEvent(remoteMovie) { DownloadId = "35238", DownloadClientId = client.Id });
 
             Mocker.GetMock<IDownloadHistoryService>()
                 .Setup(s => s.GetLatestDownloadHistoryItem(It.Is<string>(sr => sr == "35238")))

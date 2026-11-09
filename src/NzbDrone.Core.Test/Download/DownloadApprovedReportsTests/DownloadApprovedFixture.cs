@@ -83,6 +83,57 @@ namespace NzbDrone.Core.Test.Download.DownloadApprovedReportsTests
             Mocker.GetMock<IDownloadService>().Verify(v => v.DownloadReport(It.IsAny<RemoteMovie>(), null), Times.Once());
         }
 
+        private RemoteMovie EditionReport(int editionId, string guid)
+        {
+            var remote = GetRemoteMovie(new QualityModel(Quality.Bluray1080p));
+            remote.Release.Title = "Synthetic.Voyage.2026.1080p.BluRay-SyntheticGroup";
+            remote.Release.Guid = guid;
+            remote.Release.IndexerId = 5;
+            remote.EditionContext = new MovieEditionContext(new MovieEdition { Id = editionId, MovieId = remote.Movie.Id }, remote.Movie.QualityProfile, null, true);
+            return remote;
+        }
+
+        [Test]
+        public async Task distinct_edition_reports_are_processed_independently_but_same_edition_is_suppressed()
+        {
+            var result = await Subject.ProcessDecisions(new List<DownloadDecision>
+            {
+                new DownloadDecision(EditionReport(1, "synthetic-imax")),
+                new DownloadDecision(EditionReport(2, "synthetic-directors")),
+                new DownloadDecision(EditionReport(2, "synthetic-directors-repack"))
+            });
+            result.Grabbed.Should().HaveCount(2);
+            Mocker.GetMock<IDownloadService>().Verify(s => s.DownloadReport(It.IsAny<RemoteMovie>(), null), Times.Exactly(2));
+        }
+
+        [Test]
+        public async Task conflicting_targets_for_same_release_are_rejected_before_any_grab()
+        {
+            var result = await Subject.ProcessDecisions(new List<DownloadDecision>
+            {
+                new DownloadDecision(EditionReport(1, "synthetic-same-release")),
+                new DownloadDecision(EditionReport(2, "synthetic-same-release"))
+            });
+            result.Grabbed.Should().BeEmpty();
+            result.Rejected.Should().HaveCount(2);
+            Mocker.GetMock<IDownloadService>().Verify(s => s.DownloadReport(It.IsAny<RemoteMovie>(), null), Times.Never());
+        }
+
+        [Test]
+        public async Task different_editions_have_independent_pending_entries_and_same_edition_fallbacks()
+        {
+            var delay = new DownloadRejection(DownloadRejectionReason.MinimumAgeDelay, "Synthetic delay", RejectionType.Temporary);
+            await Subject.ProcessDecisions(new List<DownloadDecision>
+            {
+                new DownloadDecision(EditionReport(1, "synthetic-imax"), delay),
+                new DownloadDecision(EditionReport(2, "synthetic-directors"), delay),
+                new DownloadDecision(EditionReport(2, "synthetic-directors-fallback"), delay)
+            });
+            Mocker.GetMock<IPendingReleaseService>().Verify(s => s.AddMany(It.Is<List<Tuple<DownloadDecision, PendingReleaseReason>>>(q =>
+                q.Count == 3 && q[0].Item2 == PendingReleaseReason.Delay && q[1].Item2 == PendingReleaseReason.Delay && q[2].Item2 == PendingReleaseReason.Fallback)), Times.Once());
+            Mocker.GetMock<IDownloadService>().Verify(s => s.DownloadReport(It.IsAny<RemoteMovie>(), null), Times.Never());
+        }
+
         [Test]
         public async Task should_only_download_movie_once()
         {

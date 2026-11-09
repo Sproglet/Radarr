@@ -34,6 +34,7 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
             var remoteMovie = BuildRemoteMovie();
 
             _trackedDownload = Builder<TrackedDownload>.CreateNew()
+                                                    .With(t => t.EditionRecoveryError = null)
                     .With(c => c.State = TrackedDownloadState.Downloading)
                     .With(c => c.DownloadItem = completed)
                     .With(c => c.RemoteMovie = remoteMovie)

@@ -10,6 +10,7 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Extras;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Subtitles;
@@ -337,6 +338,35 @@ namespace NzbDrone.Core.Test.MediaFiles
             Db.All<MovieFile>().Should().BeEmpty();
             File.Exists(path).Should().BeTrue();
             _recycled.Should().BeEmpty();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void tracked_import_context_replaces_only_its_assigned_edition(bool primaryTarget)
+        {
+            ManualImport(_imax, "SyntheticImax");
+            ManualImport(_directors, "SyntheticDirectors");
+            var target = primaryTarget ? _imax : _directors;
+            var other = Db.All<MovieFile>().Single(f => f.MovieEditionId != target.Id);
+            var otherPath = Path.Combine(_movie.Path, other.RelativePath);
+            var bytes = File.ReadAllBytes(otherPath);
+            var item = new DownloadClientItem { DownloadId = "synthetic-recovered-download", Title = "Synthetic.Voyage.2026-SyntheticGroup" };
+            var context = _contexts.Resolve(_movie, target.Id);
+            Mocker.GetMock<ITrackedDownloadService>().Setup(t => t.Find(item.DownloadId))
+                .Returns(new TrackedDownload { RemoteMovie = new RemoteMovie { Movie = _movie, EditionContext = context } });
+            Mocker.SetConstant<IEnumerable<IImportDecisionEngineSpecification>>(Array.Empty<IImportDecisionEngineSpecification>());
+            var decisions = Mocker.Resolve<ImportDecisionMaker>().GetImportDecisions(new List<string> { Source("SyntheticRecoveredUpgrade") }, _movies.Get(_movie.Id), item, null, true);
+            decisions.Should().ContainSingle();
+            decisions[0].LocalMovie.Quality = new QualityModel(Quality.Bluray1080p);
+            decisions[0].LocalMovie.Languages = new List<Language> { Language.English };
+            decisions[0].LocalMovie.EditionContext.Edition.Id.Should().Be(target.Id);
+
+            var result = _importer.Import(decisions, true, null, ImportMode.Copy);
+
+            result.Single().Result.Should().Be(ImportResultType.Imported);
+            Db.All<MovieFile>().Single(f => f.MovieEditionId != target.Id).Id.Should().Be(other.Id);
+            File.ReadAllBytes(otherPath).Should().Equal(bytes);
+            Db.All<MovieFile>().Single(f => f.MovieEditionId == target.Id).Id.Should().NotBe(context.CurrentFile.Id);
         }
 
         [Test]

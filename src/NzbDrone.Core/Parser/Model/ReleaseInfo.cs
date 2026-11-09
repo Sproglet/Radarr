@@ -44,6 +44,10 @@ namespace NzbDrone.Core.Parser.Model
         [JsonIgnore]
         public PendingReleaseReason? PendingReleaseReason { get; set; }
 
+        // Server-only reference. Reload the stored assignment before RSS evaluation.
+        [JsonIgnore]
+        internal int? PendingReleaseId { get; set; }
+
         public int Age
         {
             get { return DateTime.UtcNow.Subtract(PublishDate).Days; }

@@ -9,6 +9,7 @@ using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.DecisionEngine.Specifications.RssSync;
 using NzbDrone.Core.Download.Aggregation;
+using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Parser;
@@ -31,6 +32,7 @@ namespace NzbDrone.Core.DecisionEngine
         private readonly Logger _logger;
         private readonly IMovieEditionRepository _editions;
         private readonly IMovieEditionEvaluationService _editionEvaluation;
+        private readonly IPendingReleaseService _pendingReleases;
 
         public DownloadDecisionMaker(IEnumerable<IDownloadDecisionEngineSpecification> specifications,
                                      IParsingService parsingService,
@@ -38,6 +40,7 @@ namespace NzbDrone.Core.DecisionEngine
                                      IRemoteMovieAggregationService aggregationService,
                                      IMovieEditionRepository editions,
                                      IMovieEditionEvaluationService editionEvaluation,
+                                     IPendingReleaseService pendingReleases,
                                      Logger logger)
         {
             _specifications = specifications;
@@ -47,6 +50,7 @@ namespace NzbDrone.Core.DecisionEngine
             _logger = logger;
             _editions = editions;
             _editionEvaluation = editionEvaluation;
+            _pendingReleases = pendingReleases;
         }
 
         public List<DownloadDecision> GetRssDecision(List<ReleaseInfo> reports, bool pushedRelease = false)
@@ -80,25 +84,30 @@ namespace NzbDrone.Core.DecisionEngine
 
                 try
                 {
-                    var parsedMovieInfo = Parser.Parser.ParseMovieTitle(report.Title);
+                    var isPending = searchCriteria == null && report.PendingReleaseId.HasValue;
+                    var recovered = isPending ? _pendingReleases.GetPendingRemoteMovie(report) : null;
+                    var parsedMovieInfo = recovered?.ParsedMovieInfo ?? Parser.Parser.ParseMovieTitle(report.Title);
 
-                    if (parsedMovieInfo != null && !parsedMovieInfo.PrimaryMovieTitle.IsNullOrWhiteSpace())
+                    if (isPending || (parsedMovieInfo != null && !parsedMovieInfo.PrimaryMovieTitle.IsNullOrWhiteSpace()))
                     {
-                        var remoteMovie = _parsingService.Map(parsedMovieInfo, report.ImdbId.ToString(), report.TmdbId, searchCriteria);
+                        var remoteMovie = recovered ?? _parsingService.Map(parsedMovieInfo, report.ImdbId.ToString(), report.TmdbId, searchCriteria);
                         remoteMovie.Release = report;
                         remoteMovie.ReleaseSource = GetReleaseSource(pushedRelease, searchCriteria);
 
                         if (remoteMovie.Movie == null)
                         {
-                            decision = new DownloadDecision(remoteMovie, new DownloadRejection(DownloadRejectionReason.UnknownMovie, pushedRelease ? "Unknown Movie. Unable to match to existing movie in Library using release title." : "Unknown Movie. Unable to match to correct movie using release title."));
+                            decision = new DownloadDecision(remoteMovie, new DownloadRejection(DownloadRejectionReason.UnknownMovie, remoteMovie.EditionRecoveryError ?? (pushedRelease ? "Unknown Movie. Unable to match to existing movie in Library using release title." : "Unknown Movie. Unable to match to correct movie using release title.")));
                         }
                         else
                         {
-                            _aggregationService.Augment(remoteMovie);
-
-                            if (_editions.GetByMovie(remoteMovie.Movie.Id)?.Count > 1)
+                            if (!isPending)
                             {
-                                remoteMovie.EditionEvaluation = _editionEvaluation.PreviewParsed(remoteMovie);
+                                _aggregationService.Augment(remoteMovie);
+                            }
+
+                            if (remoteMovie.EditionContext != null || remoteMovie.EditionRecoveryError != null || _editions.GetByMovie(remoteMovie.Movie.Id)?.Count > 1)
+                            {
+                                remoteMovie.EditionEvaluation = isPending ? RecoveredEvaluation(remoteMovie) : _editionEvaluation.PreviewParsed(remoteMovie);
                                 remoteMovie.EditionContext = remoteMovie.EditionEvaluation.Context;
                                 remoteMovie.CustomFormats = _formatCalculator.ParseCustomFormat(remoteMovie, remoteMovie.Release.Size);
                                 remoteMovie.CustomFormatScore = remoteMovie.EditionEvaluation.CustomFormatScore ?? 0;
@@ -110,8 +119,8 @@ namespace NzbDrone.Core.DecisionEngine
                                 };
                                 if (remoteMovie.EditionContext != null)
                                 {
-                                    // Only converted, read-only checks run here. Queue, history and delay
-                                    // remain behind the recovery gate, even when all these checks pass.
+                                    // These converted checks provide previews only. The acquisition gate
+                                    // remains closed independently of their results.
                                     var information = new ReleaseDecisionInformation(pushedRelease, searchCriteria);
                                     rejections.AddRange(_specifications.Where(IsEditionPreviewSpecification)
                                         .Select(s => EvaluateSpec(s, remoteMovie, information)).Where(r => r != null));
@@ -183,11 +192,31 @@ namespace NzbDrone.Core.DecisionEngine
             }
         }
 
+        private static MovieEditionEvaluation RecoveredEvaluation(RemoteMovie remote)
+        {
+            var context = remote.EditionRecoveryError == null ? remote.EditionContext : null;
+            return new MovieEditionEvaluation
+            {
+                Context = context,
+                CustomFormatScore = context == null ? null : remote.CustomFormatScore,
+                Classification = new EditionClassification
+                {
+                    Status = context == null ? EditionClassificationStatus.Invalid : EditionClassificationStatus.Matched,
+                    CandidateEditionIds = context == null ? new List<int>() : new List<int> { context.Edition.Id },
+                    Attributes = context == null ? new Dictionary<string, string>() : new Dictionary<string, string>(context.Edition.Attributes),
+                    RuleRevision = remote.EditionEvaluation?.Classification?.RuleRevision,
+                    Reason = remote.EditionRecoveryError ?? "Recovered persisted pending assignment; current matching rules were not reapplied."
+                }
+            };
+        }
+
         private static bool IsEditionPreviewSpecification(IDownloadDecisionEngineSpecification specification)
         {
             return specification is UpgradeDiskSpecification or UpgradeAllowedSpecification or RepackSpecification or
                 ProperSpecification or MonitoredMovieSpecification or QualityAllowedByProfileSpecification or
-                CustomFormatAllowedbyProfileSpecification or Specifications.LanguageSpecification;
+                CustomFormatAllowedbyProfileSpecification or Specifications.LanguageSpecification or
+                QueueSpecification or HistorySpecification or DelaySpecification or PendingSpecification or
+                AlreadyImportedSpecification or BlocklistSpecification;
         }
 
         private DownloadDecision GetDecisionForReport(RemoteMovie remoteMovie, ReleaseDecisionInformation information)

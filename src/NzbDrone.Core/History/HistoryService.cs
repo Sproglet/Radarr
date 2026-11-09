@@ -21,6 +21,7 @@ namespace NzbDrone.Core.History
         QualityModel GetBestQualityInHistory(QualityProfile profile, int movieId);
         PagingSpec<MovieHistory> Paged(PagingSpec<MovieHistory> pagingSpec, int[] languages, int[] qualities);
         MovieHistory MostRecentForMovie(int movieId);
+        MovieHistory MostRecentForEdition(int movieId, int editionId);
         List<MovieHistory> FindByMovieId(int movieId);
         MovieHistory MostRecentForDownloadId(string downloadId);
         MovieHistory Get(int historyId);
@@ -58,6 +59,11 @@ namespace NzbDrone.Core.History
         public MovieHistory MostRecentForMovie(int movieId)
         {
             return _historyRepository.MostRecentForMovie(movieId);
+        }
+
+        public MovieHistory MostRecentForEdition(int movieId, int editionId)
+        {
+            return _historyRepository.MostRecentForEdition(movieId, editionId);
         }
 
         public List<MovieHistory> FindByMovieId(int movieId)
@@ -108,18 +114,13 @@ namespace NzbDrone.Core.History
 
             var movieId = trackedDownload.MovieInfo.Movie.Id;
             var movieHistory = _historyRepository.FindDownloadHistory(movieId, trackedDownload.ImportedMovie.Quality);
-            if (trackedDownload.MovieInfo.EditionContext?.HasMultipleEditions == true)
-            {
-                var editionId = trackedDownload.MovieInfo.EditionContext.Edition.Id;
-                movieHistory = movieHistory.Where(h => h.MovieEditionId == editionId).ToList();
-            }
-
 
             var processedDownloadId = movieHistory
                 .Where(c => c.EventType != MovieHistoryEventType.Grabbed && c.DownloadId != null)
                 .Select(c => c.DownloadId);
 
-            var stillDownloading = movieHistory.Where(c => c.EventType == MovieHistoryEventType.Grabbed && !processedDownloadId.Contains(c.DownloadId)).ToList();
+            var stillDownloading = movieHistory.Where(c => c.EventType == MovieHistoryEventType.Grabbed && !processedDownloadId.Contains(c.DownloadId) &&
+                (trackedDownload.MovieInfo.EditionContext?.HasMultipleEditions != true || c.MovieEditionId == trackedDownload.MovieInfo.EditionContext.Edition.Id)).ToList();
 
             string downloadId = null;
 
@@ -148,7 +149,7 @@ namespace NzbDrone.Core.History
                 DownloadId = message.DownloadId,
                 MovieId = message.Movie.Movie.Id,
                 MovieEditionId = message.Movie.EditionContext?.Edition.Id,
-                EditionRuleRevision = message.Movie.EditionContext?.Edition.RuleRevision
+                EditionRuleRevision = message.Movie.EditionEvaluation?.Classification?.RuleRevision ?? message.Movie.EditionContext?.Edition.RuleRevision
             };
 
             if (message.Movie.EditionContext != null)
@@ -164,6 +165,7 @@ namespace NzbDrone.Core.History
             history.Data.Add("AgeMinutes", message.Movie.Release.AgeMinutes.ToString());
             history.Data.Add("PublishedDate", message.Movie.Release.PublishDate.ToUniversalTime().ToString("s") + "Z");
             history.Data.Add("DownloadClient", message.DownloadClient);
+            history.Data.Add(MovieHistory.DOWNLOAD_CLIENT_ID, message.DownloadClientId.ToString());
             history.Data.Add("DownloadClientName", message.DownloadClientName);
             history.Data.Add("Size", message.Movie.Release.Size.ToString());
             history.Data.Add("DownloadUrl", message.Movie.Release.DownloadUrl);
@@ -227,6 +229,10 @@ namespace NzbDrone.Core.History
             history.Data.Add("DroppedPath", message.MovieInfo.Path);
             history.Data.Add("ImportedPath", Path.Combine(movie.Path, message.ImportedMovie.RelativePath));
             history.Data.Add("DownloadClient", message.DownloadClientInfo?.Type);
+            if (message.DownloadClientInfo != null)
+            {
+                history.Data[MovieHistory.DOWNLOAD_CLIENT_ID] = message.DownloadClientInfo.Id.ToString();
+            }
             history.Data.Add("DownloadClientName", message.DownloadClientInfo?.Name);
             history.Data.Add("ReleaseGroup", message.MovieInfo.ReleaseGroup);
             history.Data.Add("CustomFormatScore", message.MovieInfo.CustomFormatScore.ToString());
@@ -299,11 +305,18 @@ namespace NzbDrone.Core.History
                 Quality = message.Quality,
                 SourceTitle = message.SourceTitle,
                 MovieId = message.MovieId,
+                MovieEditionId = message.MovieEditionId ?? message.TrackedDownload?.RemoteMovie?.EditionContext?.Edition.Id,
+                EditionRuleRevision = message.EditionRuleRevision ?? message.TrackedDownload?.RemoteMovie?.EditionContext?.Edition.RuleRevision,
                 DownloadId = message.DownloadId,
                 Languages = message.Languages
             };
 
             history.Data.Add("DownloadClient", message.DownloadClientInfo.Type);
+            history.Data.Add(MovieHistory.DOWNLOAD_CLIENT_ID, message.DownloadClientInfo.Id.ToString());
+            if (history.MovieEditionId.HasValue)
+            {
+                history.Data["movieEditionName"] = message.MovieEditionName ?? message.TrackedDownload?.RemoteMovie?.EditionContext?.Edition.Name;
+            }
             history.Data.Add("DownloadClientName", message.DownloadClientInfo.Name);
             history.Data.Add("Message", message.Message);
             history.Data.Add("ReleaseGroup", message.TrackedDownload?.RemoteMovie?.ParsedMovieInfo?.ReleaseGroup);
@@ -328,11 +341,23 @@ namespace NzbDrone.Core.History
                 Languages = message.Languages,
                 SourceTitle = message.SourceTitle,
                 MovieId = message.MovieId,
+                MovieEditionId = message.MovieEditionId ?? message.TrackedDownload?.RemoteMovie?.EditionContext?.Edition.Id,
+                EditionRuleRevision = message.EditionRuleRevision ?? message.TrackedDownload?.RemoteMovie?.EditionContext?.Edition.RuleRevision,
                 DownloadId = message.DownloadId
             };
 
             history.Data.Add("DownloadClient", message.DownloadClient);
-            history.Data.Add("DownloadClientName", message.TrackedDownload?.DownloadItem.DownloadClientInfo.Name);
+            if (message.DownloadClientId.HasValue)
+            {
+                history.Data[MovieHistory.DOWNLOAD_CLIENT_ID] = message.DownloadClientId.Value.ToString();
+            }
+
+            if (history.MovieEditionId.HasValue)
+            {
+                history.Data["movieEditionName"] = message.MovieEditionName ?? message.Data.GetValueOrDefault("movieEditionName") ??
+                    message.TrackedDownload?.RemoteMovie?.EditionContext?.Edition.Name;
+            }
+            history.Data.Add("DownloadClientName", message.TrackedDownload?.DownloadItem.DownloadClientInfo.Name ?? message.Data.GetValueOrDefault("downloadClientName"));
             history.Data.Add("Message", message.Message);
             history.Data.Add("ReleaseGroup", message.TrackedDownload?.RemoteMovie?.ParsedMovieInfo?.ReleaseGroup ?? message.Data.GetValueOrDefault(MovieHistory.RELEASE_GROUP));
             history.Data.Add("Size", message.TrackedDownload?.DownloadItem.TotalSize.ToString() ?? message.Data.GetValueOrDefault(MovieHistory.SIZE));

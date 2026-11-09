@@ -16,6 +16,7 @@ namespace NzbDrone.Core.Parser.Model
         public int CustomFormatScore { get; set; }
         public MovieMatchType MovieMatchType { get; set; }
         public Movie Movie { get; set; }
+        public string EditionRecoveryError { get; set; }
         public MovieEditionEvaluation EditionEvaluation { get; set; }
         public MovieEditionContext EditionContext { get; set; }
         public QualityProfile EffectiveQualityProfile => EditionContext != null ? EditionContext.QualityProfile : Movie?.QualityProfile;

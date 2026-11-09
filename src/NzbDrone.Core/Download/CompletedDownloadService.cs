@@ -59,6 +59,13 @@ namespace NzbDrone.Core.Download
 
         public void Check(TrackedDownload trackedDownload)
         {
+            if (trackedDownload.EditionRecoveryError != null)
+            {
+                trackedDownload.Warn(trackedDownload.EditionRecoveryError);
+                SetStateToImportBlocked(trackedDownload);
+                return;
+            }
+
             if (trackedDownload.DownloadItem.Status != DownloadItemStatus.Completed)
             {
                 return;
@@ -121,6 +128,13 @@ namespace NzbDrone.Core.Download
 
         public void Import(TrackedDownload trackedDownload)
         {
+            if (trackedDownload.EditionRecoveryError != null)
+            {
+                trackedDownload.Warn(trackedDownload.EditionRecoveryError);
+                SetStateToImportBlocked(trackedDownload);
+                return;
+            }
+
             SetImportItem(trackedDownload);
 
             if (!ValidatePath(trackedDownload))

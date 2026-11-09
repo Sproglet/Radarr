@@ -31,6 +31,8 @@ namespace NzbDrone.Core.MediaFiles.MovieImport
         private readonly ITrackedDownloadService _trackedDownloadService;
         private readonly ILocalMovieCustomFormatCalculationService _formatCalculator;
         private readonly Logger _logger;
+        private readonly IMovieEditionContextService _editionContexts;
+        private readonly IMovieEditionRecoveryService _editionRecovery;
 
         public ImportDecisionMaker(IEnumerable<IImportDecisionEngineSpecification> specifications,
                                    IMediaFileService mediaFileService,
@@ -39,6 +41,8 @@ namespace NzbDrone.Core.MediaFiles.MovieImport
                                    IDetectSample detectSample,
                                    ITrackedDownloadService trackedDownloadService,
                                    ILocalMovieCustomFormatCalculationService formatCalculator,
+                                   IMovieEditionContextService editionContexts,
+                                   IMovieEditionRecoveryService editionRecovery,
                                    Logger logger)
         {
             _specifications = specifications;
@@ -49,6 +53,8 @@ namespace NzbDrone.Core.MediaFiles.MovieImport
             _trackedDownloadService = trackedDownloadService;
             _formatCalculator = formatCalculator;
             _logger = logger;
+            _editionContexts = editionContexts;
+            _editionRecovery = editionRecovery;
         }
 
         public List<ImportDecision> GetImportDecisions(List<string> videoFiles, Movie movie)
@@ -122,6 +128,22 @@ namespace NzbDrone.Core.MediaFiles.MovieImport
                 localMovie.FileMovieInfo = fileMovieInfo;
                 localMovie.Size = _diskProvider.GetFileSize(localMovie.Path);
 
+                if (downloadClientItem?.DownloadId.IsNotNullOrWhiteSpace() == true)
+                {
+                    var tracked = _trackedDownloadService.Find(downloadClientItem.DownloadId);
+                    if (tracked?.EditionRecoveryError != null)
+                    {
+                        return new ImportDecision(localMovie, new ImportRejection(ImportRejectionReason.InvalidMovie, tracked.EditionRecoveryError));
+                    }
+
+                    localMovie.EditionContext ??= tracked?.RemoteMovie?.EditionContext;
+                    if (localMovie.EditionContext != null)
+                    {
+                        _editionContexts.Validate(localMovie.Movie, localMovie.EditionContext);
+                        _editionRecovery.ValidateEvidence(localMovie.EditionContext, fileMovieInfo);
+                    }
+                }
+
                 _aggregationService.Augment(localMovie, downloadClientItem);
 
                 if (localMovie.Movie == null)
@@ -144,6 +166,10 @@ namespace NzbDrone.Core.MediaFiles.MovieImport
 
                     decision = GetDecision(localMovie, downloadClientItem);
                 }
+            }
+            catch (InvalidOperationException ex)
+            {
+                decision = new ImportDecision(localMovie, new ImportRejection(ImportRejectionReason.InvalidMovie, ex.Message));
             }
             catch (AugmentingFailedException)
             {

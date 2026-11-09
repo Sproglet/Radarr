@@ -1,12 +1,16 @@
 using System;
 using NzbDrone.Core.Download.History;
+using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.History;
+using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Movies
 {
     public interface IMovieEditionRecoveryService
     {
         MovieEditionContext Recover(Movie movie, MovieHistory grab, DownloadHistory downloadGrab);
+        MovieEditionContext RecoverPending(Movie movie, PendingRelease pending);
+        void ValidateEvidence(MovieEditionContext context, ParsedMovieInfo parsed);
     }
 
     // Recovery primitive only. Never reclassifies persisted intent using current matching rules.
@@ -20,6 +24,44 @@ namespace NzbDrone.Core.Movies
         {
             _contexts = contexts;
             _editions = editions;
+        }
+
+        public void ValidateEvidence(MovieEditionContext context, ParsedMovieInfo parsed)
+        {
+            if (context == null || string.IsNullOrWhiteSpace(parsed?.SimpleReleaseTitle))
+            {
+                return; // An obfuscated/unlabelled filename does not revoke persisted intent.
+            }
+
+            var evidence = MovieEditionEvidence.FromParsed(parsed);
+            if (!evidence.Valid)
+            {
+                throw new InvalidOperationException("Invalid edition evidence; manual review required.");
+            }
+
+            var attributes = MovieEditionClassifier.ParseEvidence(evidence.Label, evidence.Presentation, false);
+            if (attributes.Status != EditionClassificationStatus.Matched)
+            {
+                throw new InvalidOperationException("Conflicting or unrecognized edition evidence; manual review required.");
+            }
+
+            foreach (var attribute in attributes.Attributes)
+            {
+                if (context.Edition.Attributes.TryGetValue(attribute.Key, out var assigned) && assigned != attribute.Value)
+                {
+                    throw new InvalidOperationException("Release edition evidence contradicts the persisted assignment; manual review required.");
+                }
+            }
+        }
+
+        public MovieEditionContext RecoverPending(Movie movie, PendingRelease pending)
+        {
+            if (pending.MovieId != movie.Id)
+            {
+                throw new InvalidOperationException("Pending assignment belongs to another movie.");
+            }
+
+            return ResolveAssigned(movie, pending.MovieEditionId);
         }
 
         public MovieEditionContext Recover(Movie movie, MovieHistory grab, DownloadHistory downloadGrab)
@@ -41,6 +83,11 @@ namespace NzbDrone.Core.Movies
             }
 
             var editionId = grab?.MovieEditionId ?? downloadGrab?.MovieEditionId;
+            return ResolveAssigned(movie, editionId);
+        }
+
+        private MovieEditionContext ResolveAssigned(Movie movie, int? editionId)
+        {
             if (editionId.HasValue)
             {
                 return _contexts.Resolve(movie, editionId);

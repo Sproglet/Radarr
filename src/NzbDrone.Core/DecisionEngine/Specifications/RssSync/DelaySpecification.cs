@@ -39,7 +39,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
                 return DownloadSpecDecision.Accept();
             }
 
-            var profile = subject.Movie.QualityProfile;
+            var profile = subject.EffectiveQualityProfile;
             var delayProfile = _delayProfileService.BestForTags(subject.Movie.Tags);
             var delay = delayProfile.GetProtocolDelay(subject.Release.DownloadProtocol);
             var isPreferredProtocol = subject.Release.DownloadProtocol == delayProfile.PreferredProtocol;
@@ -54,9 +54,9 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
             var qualityComparer = new QualityModelComparer(profile);
 
-            var file = subject.Movie.MovieFile;
+            var file = subject.CurrentFile;
 
-            if (isPreferredProtocol && (subject.Movie.MovieFileId != 0 && file != null))
+            if (isPreferredProtocol && file != null && (subject.EditionContext != null || subject.Movie.MovieFileId != 0))
             {
                 var customFormats = _formatService.ParseCustomFormat(file);
                 var upgradeableRejectReason = _qualityUpgradableSpecification.IsUpgradable(profile,
@@ -67,7 +67,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
                 if (upgradeableRejectReason == UpgradeableRejectReason.None)
                 {
-                    var revisionUpgrade = _qualityUpgradableSpecification.IsRevisionUpgrade(subject.Movie.MovieFile.Quality, subject.ParsedMovieInfo.Quality);
+                    var revisionUpgrade = _qualityUpgradableSpecification.IsRevisionUpgrade(file.Quality, subject.ParsedMovieInfo.Quality);
 
                     if (revisionUpgrade)
                     {
@@ -103,7 +103,9 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
                 }
             }
 
-            var oldest = _pendingReleaseService.OldestPendingRelease(subject.Movie.Id);
+            var oldest = subject.EditionContext == null
+                ? _pendingReleaseService.OldestPendingRelease(subject.Movie.Id)
+                : _pendingReleaseService.OldestPendingReleaseForEdition(subject.Movie.Id, subject.EditionContext.Edition.Id);
 
             if (oldest != null && oldest.Release.AgeMinutes > delay)
             {

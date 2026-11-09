@@ -89,6 +89,8 @@ namespace NzbDrone.Core.Test.Download.Pending.PendingReleaseServiceTests
             var heldReleases = Builder<PendingRelease>.CreateListOfSize(1)
                                                    .All()
                                                    .With(h => h.MovieId = _movie.Id)
+                                                   .With(h => h.MovieEditionId = null)
+                                                   .With(h => h.EditionRuleRevision = null)
                                                    .With(h => h.Release = _release.JsonClone())
                                                    .With(h => h.ParsedMovieInfo = parsedMovieInfo)
                                                    .Build();

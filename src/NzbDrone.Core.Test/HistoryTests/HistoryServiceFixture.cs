@@ -31,6 +31,21 @@ namespace NzbDrone.Core.Test.HistoryTests
         }
 
         [Test]
+        public void should_not_infer_a_processed_download_when_terminal_history_has_no_edition()
+        {
+            var quality = new QualityModel(Quality.Bluray1080p);
+            Mocker.GetMock<IHistoryRepository>().Setup(r => r.FindDownloadHistory(42, quality)).Returns(new List<MovieHistory>
+            {
+                new MovieHistory { MovieId = 42, MovieEditionId = 2, DownloadId = "synthetic-download", EventType = MovieHistoryEventType.Grabbed },
+                new MovieHistory { MovieId = 42, DownloadId = "synthetic-download", EventType = MovieHistoryEventType.DownloadFailed }
+            });
+            var local = new LocalMovie { Movie = new Movie { Id = 42 }, Path = "/synthetic/source.mkv",
+                EditionContext = new MovieEditionContext(new MovieEdition { Id = 2 }, null, null, true) };
+            var file = new MovieFile { MovieId = 42, Quality = quality, Path = local.Path };
+            Subject.FindDownloadId(new MovieFileImportedEvent(local, file, new List<DeletedMovieFile>(), true, null)).Should().BeNull();
+        }
+
+        [Test]
         public void should_return_null_if_no_history()
         {
             Mocker.GetMock<IHistoryRepository>()

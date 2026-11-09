@@ -5,6 +5,7 @@ using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Movies;
 using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Download
@@ -14,13 +15,16 @@ namespace NzbDrone.Core.Download
         private readonly IConfigService _configService;
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly Logger _logger;
+        private readonly IMovieEditionRepository _editions;
 
         public RedownloadFailedDownloadService(IConfigService configService,
                                                IManageCommandQueue commandQueueManager,
+                                               IMovieEditionRepository editions,
                                                Logger logger)
         {
             _configService = configService;
             _commandQueueManager = commandQueueManager;
+            _editions = editions;
             _logger = logger;
         }
 
@@ -47,6 +51,14 @@ namespace NzbDrone.Core.Download
 
             if (message.MovieId != 0)
             {
+                if (message.MovieEditionId.HasValue || message.TrackedDownload?.RemoteMovie?.EditionContext != null ||
+                    message.TrackedDownload?.EditionRecoveryError != null || message.TrackedDownload?.RemoteMovie?.EditionRecoveryError != null ||
+                    _editions.GetByMovie(message.MovieId)?.Count > 1)
+                {
+                    _logger.Debug("Edition-aware automatic retries remain disabled; retain the failed target for review.");
+                    return;
+                }
+
                 _logger.Debug("Failed download contains a movie, searching again.");
                 _commandQueueManager.Push(new MoviesSearchCommand { MovieIds = new List<int> { message.MovieId } });
             }

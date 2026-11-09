@@ -47,6 +47,9 @@ namespace NzbDrone.Core.Test.Download.Pending.PendingReleaseServiceTests
             _movie.QualityProfile = _profile;
 
             _release = Builder<ReleaseInfo>.CreateNew().Build();
+            _release.Guid = null;
+            _release.DownloadUrl = null;
+            _release.IndexerId = 0;
 
             _parsedMovieInfo = Builder<ParsedMovieInfo>.CreateNew().Build();
             _parsedMovieInfo.Quality = new QualityModel(Quality.HDTV720p);
@@ -80,12 +83,15 @@ namespace NzbDrone.Core.Test.Download.Pending.PendingReleaseServiceTests
         private void GivenHeldRelease(string title, string indexer, DateTime publishDate, PendingReleaseReason reason = PendingReleaseReason.Delay)
         {
             var release = _release.JsonClone();
+            release.Title = title;
             release.Indexer = indexer;
             release.PublishDate = publishDate;
 
             var heldReleases = Builder<PendingRelease>.CreateListOfSize(1)
                                                    .All()
                                                    .With(h => h.MovieId = _movie.Id)
+                                                   .With(h => h.MovieEditionId = null)
+                                                   .With(h => h.EditionRuleRevision = null)
                                                    .With(h => h.Title = title)
                                                    .With(h => h.Release = release)
                                                    .With(h => h.Reason = reason)

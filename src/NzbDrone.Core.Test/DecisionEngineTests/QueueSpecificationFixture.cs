@@ -53,7 +53,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
             _releaseInfo = Builder<ReleaseInfo>.CreateNew()
                                    .Build();
 
-            _remoteMovie = Builder<RemoteMovie>.CreateNew()
+            _remoteMovie = Builder<RemoteMovie>.CreateNew().With(r => r.EditionRecoveryError = null)
                 .With(r => r.Movie = _movie)
                 .With(r => r.ParsedMovieInfo = new ParsedMovieInfo { Quality = new QualityModel(Quality.DVD) })
                 .With(x => x.CustomFormats = new List<CustomFormat>())
@@ -94,7 +94,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         [Test]
         public void should_return_true_when_movie_doesnt_match()
         {
-            var remoteMovie = Builder<RemoteMovie>.CreateNew()
+            var remoteMovie = Builder<RemoteMovie>.CreateNew().With(r => r.EditionRecoveryError = null)
                                                        .With(r => r.Movie = _otherMovie)
                                                        .Build();
 
@@ -107,7 +107,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         {
             _movie.QualityProfile.Cutoff = Quality.Bluray1080p.Id;
 
-            var remoteMovie = Builder<RemoteMovie>.CreateNew()
+            var remoteMovie = Builder<RemoteMovie>.CreateNew().With(r => r.EditionRecoveryError = null)
                 .With(r => r.Movie = _movie)
                 .With(r => r.ParsedMovieInfo = new ParsedMovieInfo
                 {
@@ -123,7 +123,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         [Test]
         public void should_return_false_when_qualities_are_the_same()
         {
-            var remoteMovie = Builder<RemoteMovie>.CreateNew()
+            var remoteMovie = Builder<RemoteMovie>.CreateNew().With(r => r.EditionRecoveryError = null)
                                                       .With(r => r.Movie = _movie)
                                                       .With(r => r.ParsedMovieInfo = new ParsedMovieInfo
                                                       {
@@ -140,7 +140,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         {
             _movie.QualityProfile.Cutoff = Quality.Bluray1080p.Id;
 
-            var remoteMovie = Builder<RemoteMovie>.CreateNew()
+            var remoteMovie = Builder<RemoteMovie>.CreateNew().With(r => r.EditionRecoveryError = null)
                                                       .With(r => r.Movie = _movie)
                                                       .With(r => r.ParsedMovieInfo = new ParsedMovieInfo
                                                       {
@@ -157,7 +157,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         {
             _movie.QualityProfile.Cutoff = _remoteMovie.ParsedMovieInfo.Quality.Quality.Id;
 
-            var remoteMovie = Builder<RemoteMovie>.CreateNew()
+            var remoteMovie = Builder<RemoteMovie>.CreateNew().With(r => r.EditionRecoveryError = null)
                                                       .With(r => r.Movie = _movie)
                                                       .With(r => r.ParsedMovieInfo = new ParsedMovieInfo
                                                       {
@@ -176,7 +176,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
             _movie.QualityProfile.Cutoff = Quality.Bluray1080p.Id;
             _movie.QualityProfile.UpgradeAllowed = false;
 
-            var remoteMovie = Builder<RemoteMovie>.CreateNew()
+            var remoteMovie = Builder<RemoteMovie>.CreateNew().With(r => r.EditionRecoveryError = null)
                 .With(r => r.Movie = _movie)
                 .With(r => r.ParsedMovieInfo = new ParsedMovieInfo
                 {
@@ -193,7 +193,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         {
             _movie.QualityProfile.Cutoff = Quality.Bluray1080p.Id;
 
-            var remoteMovie = Builder<RemoteMovie>.CreateNew()
+            var remoteMovie = Builder<RemoteMovie>.CreateNew().With(r => r.EditionRecoveryError = null)
                 .With(r => r.Movie = _movie)
                 .With(r => r.ParsedMovieInfo = new ParsedMovieInfo
                 {
@@ -217,7 +217,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
                 .Setup(s => s.DownloadPropersAndRepacks)
                 .Returns(ProperDownloadTypes.DoNotUpgrade);
 
-            var remoteMovie = Builder<RemoteMovie>.CreateNew()
+            var remoteMovie = Builder<RemoteMovie>.CreateNew().With(r => r.EditionRecoveryError = null)
                 .With(r => r.Movie = _movie)
                 .With(r => r.ParsedMovieInfo = new ParsedMovieInfo
                 {

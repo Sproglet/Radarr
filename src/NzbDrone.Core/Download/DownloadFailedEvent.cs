@@ -15,6 +15,10 @@ namespace NzbDrone.Core.Download
         }
 
         public int MovieId { get; set; }
+        public int? MovieEditionId { get; set; }
+        public int? EditionRuleRevision { get; set; }
+        public string MovieEditionName { get; set; }
+        public int? DownloadClientId { get; set; }
         public QualityModel Quality { get; set; }
         public string SourceTitle { get; set; }
         public string DownloadClient { get; set; }

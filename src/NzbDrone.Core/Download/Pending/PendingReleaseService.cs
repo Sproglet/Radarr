@@ -26,11 +26,13 @@ namespace NzbDrone.Core.Download.Pending
         void Add(DownloadDecision decision, PendingReleaseReason reason);
         void AddMany(List<Tuple<DownloadDecision, PendingReleaseReason>> decisions);
         List<ReleaseInfo> GetPending();
+        RemoteMovie GetPendingRemoteMovie(ReleaseInfo release);
         List<RemoteMovie> GetPendingRemoteMovies(int movieId);
         List<Queue.Queue> GetPendingQueue();
         Queue.Queue FindPendingQueueItem(int queueId);
         void RemovePendingQueueItems(int queueId);
         RemoteMovie OldestPendingRelease(int movieId);
+        RemoteMovie OldestPendingReleaseForEdition(int movieId, int editionId);
     }
 
     public class PendingReleaseService : IPendingReleaseService,
@@ -51,6 +53,7 @@ namespace NzbDrone.Core.Download.Pending
         private readonly IIndexerFactory _indexerFactory;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
+        private readonly IMovieEditionRecoveryService _editionRecovery;
 
         public PendingReleaseService(IIndexerStatusService indexerStatusService,
                                      IPendingReleaseRepository repository,
@@ -64,6 +67,7 @@ namespace NzbDrone.Core.Download.Pending
                                      IDownloadClientFactory downloadClientFactory,
                                      IIndexerFactory indexerFactory,
                                      IEventAggregator eventAggregator,
+                                     IMovieEditionRecoveryService editionRecovery,
                                      Logger logger)
         {
             _indexerStatusService = indexerStatusService;
@@ -79,6 +83,7 @@ namespace NzbDrone.Core.Download.Pending
             _indexerFactory = indexerFactory;
             _eventAggregator = eventAggregator;
             _logger = logger;
+            _editionRecovery = editionRecovery;
         }
 
         public void Add(DownloadDecision decision, PendingReleaseReason reason)
@@ -88,10 +93,21 @@ namespace NzbDrone.Core.Download.Pending
 
         public void AddMany(List<Tuple<DownloadDecision, PendingReleaseReason>> decisions)
         {
+            if (decisions.Any(a => decisions.Any(b => ReleaseIdentity.Matches(a.Item1.RemoteMovie.Release, b.Item1.RemoteMovie.Release) &&
+                (a.Item1.RemoteMovie.Movie.Id != b.Item1.RemoteMovie.Movie.Id || a.Item1.RemoteMovie.EditionContext?.Edition.Id != b.Item1.RemoteMovie.EditionContext?.Edition.Id))))
+            {
+                throw new InvalidOperationException("The pending batch assigns the same release to multiple targets; manual review required.");
+            }
+
             foreach (var movieDecisions in decisions.GroupBy(v => v.Item1.RemoteMovie.Movie.Id))
             {
                 var movie = movieDecisions.First().Item1.RemoteMovie.Movie;
-                var alreadyPending = _repository.AllByMovieId(movie.Id);
+                var alreadyPending = _repository.AllByMovieId(movie.Id) ?? new List<PendingRelease>();
+                if (movieDecisions.Any(d => alreadyPending.Any(p => ReleaseIdentity.Matches(p.Release, d.Item1.RemoteMovie.Release) &&
+                    p.MovieEditionId != d.Item1.RemoteMovie.EditionContext?.Edition.Id)))
+                {
+                    throw new InvalidOperationException("The release is already pending for a different or unassigned edition. Review the saved assignment.");
+                }
 
                 foreach (var pair in movieDecisions)
                 {
@@ -139,7 +155,7 @@ namespace NzbDrone.Core.Download.Pending
                     }
 
                     _logger.Debug("Adding release {0} to pending releases with reason {1}", decision.RemoteMovie, reason);
-                    Insert(decision, reason);
+                    alreadyPending.Add(Insert(decision, reason));
                 }
             }
         }
@@ -151,6 +167,7 @@ namespace NzbDrone.Core.Download.Pending
                 var release = p.Release;
 
                 release.PendingReleaseReason = p.Reason;
+                release.PendingReleaseId = p.Id;
 
                 return release;
             }).ToList();
@@ -163,6 +180,30 @@ namespace NzbDrone.Core.Download.Pending
             return releases;
         }
 
+        public RemoteMovie GetPendingRemoteMovie(ReleaseInfo release)
+        {
+            var stored = release.PendingReleaseId.HasValue ? _repository.Find(release.PendingReleaseId.Value) : null;
+            if (stored == null || !ReleaseIdentity.Matches(stored.Release, release))
+            {
+                return new RemoteMovie { Release = release, EditionRecoveryError = "Pending release changed or was removed; retry RSS evaluation." };
+            }
+
+            var remote = IncludeRemoteMovies(new List<PendingRelease> { stored }).SingleOrDefault()?.RemoteMovie;
+            if (remote == null)
+            {
+                return new RemoteMovie { Release = release, EditionRecoveryError = "Pending movie no longer exists; manual review required." };
+            }
+
+            if (_repository.AllByMovieId(stored.MovieId).Any(p => p.MovieEditionId != stored.MovieEditionId && ReleaseIdentity.Matches(p.Release, stored.Release)))
+            {
+                remote.EditionRecoveryError = "The same release has conflicting pending edition assignments; manual review required.";
+            }
+
+            remote.Release = release;
+            remote.EditionEvaluation = new MovieEditionEvaluation { Classification = new EditionClassification { RuleRevision = stored.EditionRuleRevision } };
+            return remote;
+        }
+
         private List<ReleaseInfo> FilterBlockedIndexers(List<ReleaseInfo> releases)
         {
             var blockedIndexers = new HashSet<int>(_indexerStatusService.GetBlockedProviders().Select(v => v.ProviderId));
@@ -172,7 +213,8 @@ namespace NzbDrone.Core.Download.Pending
 
         public List<RemoteMovie> GetPendingRemoteMovies(int movieId)
         {
-            return IncludeRemoteMovies(_repository.AllByMovieId(movieId)).Select(v => v.RemoteMovie).ToList();
+            return IncludeRemoteMovies(_repository.AllByMovieId(movieId)).Select(v => v.RemoteMovie)
+                .Where(r => r.EditionRecoveryError == null).ToList();
         }
 
         public List<Queue.Queue> GetPendingQueue()
@@ -199,17 +241,18 @@ namespace NzbDrone.Core.Download.Pending
                 queued.Add(GetQueueItem(pendingRelease, nextRssSync, pendingRelease.RemoteMovie.Movie));
             }
 
-            // Return best quality release for each movie
-            var deduped = queued.Where(q => q.Movie != null).GroupBy(q => q.Movie.Id).Select(g =>
+            // Return the best quality release for each edition
+            var deduped = queued.Where(q => q.Movie != null && q.RemoteMovie.EditionRecoveryError == null)
+                .GroupBy(q => (q.Movie.Id, q.RemoteMovie.EditionContext?.Edition.Id)).Select(g =>
             {
-                var movies = g.First().Movie;
+                var profile = g.First().RemoteMovie.EffectiveQualityProfile;
 
-                return g.OrderByDescending(e => e.Quality, new QualityModelComparer(movies.QualityProfile))
+                return g.OrderByDescending(e => e.Quality, new QualityModelComparer(profile))
                         .ThenBy(q => PrioritizeDownloadProtocol(q.Movie, q.Protocol))
                         .First();
             });
 
-            return deduped.ToList();
+            return deduped.Concat(queued.Where(q => q.Movie == null || q.RemoteMovie.EditionRecoveryError != null)).ToList();
         }
 
         public Queue.Queue FindPendingQueueItem(int queueId)
@@ -222,7 +265,8 @@ namespace NzbDrone.Core.Download.Pending
             var targetItem = FindPendingRelease(queueId);
             var movieReleases = _repository.AllByMovieId(targetItem.MovieId);
 
-            var releasesToRemove = movieReleases.Where(c => c.ParsedMovieInfo.PrimaryMovieTitle == targetItem.ParsedMovieInfo.PrimaryMovieTitle);
+            var releasesToRemove = movieReleases.Where(c => c.MovieEditionId == targetItem.MovieEditionId &&
+                c.ParsedMovieInfo.PrimaryMovieTitle == targetItem.ParsedMovieInfo.PrimaryMovieTitle);
 
             _repository.DeleteMany(releasesToRemove.Select(c => c.Id));
         }
@@ -231,8 +275,15 @@ namespace NzbDrone.Core.Download.Pending
         {
             var movieReleases = GetPendingReleases(movieId);
 
-            return movieReleases.Select(r => r.RemoteMovie)
+            return movieReleases.Select(r => r.RemoteMovie).Where(r => r.EditionRecoveryError == null)
                                  .MaxBy(p => p.Release.AgeHours);
+        }
+
+        public RemoteMovie OldestPendingReleaseForEdition(int movieId, int editionId)
+        {
+            return IncludeRemoteMovies(_repository.AllByEdition(movieId, editionId))
+                .Where(p => p.RemoteMovie.EditionRecoveryError == null)
+                .Select(p => p.RemoteMovie).MaxBy(p => p.Release.AgeHours);
         }
 
         private List<PendingRelease> GetPendingReleases()
@@ -289,8 +340,22 @@ namespace NzbDrone.Core.Download.Pending
                     Release = release.Release
                 };
 
+                try
+                {
+                    release.RemoteMovie.EditionContext = _editionRecovery.RecoverPending(movie, release);
+                    _editionRecovery.ValidateEvidence(release.RemoteMovie.EditionContext, release.ParsedMovieInfo);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, "Unable to recover pending edition for {0}", release.Id);
+                    release.RemoteMovie.EditionRecoveryError = ex.Message;
+                    result.Add(release);
+                    continue;
+                }
+
                 _aggregationService.Augment(release.RemoteMovie);
                 release.RemoteMovie.CustomFormats = _formatCalculator.ParseCustomFormat(release.RemoteMovie, release.Release.Size);
+                release.RemoteMovie.CustomFormatScore = release.RemoteMovie.EffectiveQualityProfile?.CalculateCustomFormatScore(release.RemoteMovie.CustomFormats) ?? 0;
 
                 result.Add(release);
             }
@@ -331,6 +396,7 @@ namespace NzbDrone.Core.Download.Pending
             var queue = new Queue.Queue
             {
                 Id = GetQueueId(pendingRelease, movie),
+                ErrorMessage = pendingRelease.RemoteMovie.EditionRecoveryError,
                 Movie = movie,
                 Quality = pendingRelease.RemoteMovie.ParsedMovieInfo?.Quality ?? new QualityModel(),
                 Languages = pendingRelease.RemoteMovie.Languages,
@@ -350,7 +416,7 @@ namespace NzbDrone.Core.Download.Pending
             return queue;
         }
 
-        private void Insert(DownloadDecision decision, PendingReleaseReason reason)
+        private PendingRelease Insert(DownloadDecision decision, PendingReleaseReason reason)
         {
             var release = new PendingRelease
             {
@@ -378,6 +444,7 @@ namespace NzbDrone.Core.Download.Pending
             _repository.Insert(release);
 
             _eventAggregator.PublishEvent(new PendingReleasesUpdatedEvent());
+            return release;
         }
 
         private void Delete(PendingRelease pendingRelease)
@@ -388,9 +455,7 @@ namespace NzbDrone.Core.Download.Pending
 
         private static Func<PendingRelease, bool> MatchingReleasePredicate(ReleaseInfo release)
         {
-            return p => p.Title == release.Title &&
-                   p.Release.PublishDate == release.PublishDate &&
-                   p.Release.Indexer == release.Indexer;
+            return p => ReleaseIdentity.Matches(p.Release, release);
         }
 
         private int GetDelay(RemoteMovie remoteMovie)
@@ -406,7 +471,8 @@ namespace NzbDrone.Core.Download.Pending
         {
             var pendingReleases = GetPendingReleases(remoteMovie.Movie.Id);
 
-            var existingReports = pendingReleases.Where(r => r.RemoteMovie.Movie.Id == remoteMovie.Movie.Id)
+            var existingReports = pendingReleases.Where(r => r.RemoteMovie.Movie.Id == remoteMovie.Movie.Id &&
+                r.MovieEditionId == remoteMovie.EditionContext?.Edition.Id && r.RemoteMovie.EditionRecoveryError == null)
                                                              .ToList();
 
             if (existingReports.Empty())
@@ -414,7 +480,7 @@ namespace NzbDrone.Core.Download.Pending
                 return;
             }
 
-            var profile = remoteMovie.Movie.QualityProfile;
+            var profile = remoteMovie.EffectiveQualityProfile;
 
             foreach (var existingReport in existingReports)
             {
@@ -438,7 +504,14 @@ namespace NzbDrone.Core.Download.Pending
 
             foreach (var rejectedRelease in rejected)
             {
-                var matching = pending.Where(MatchingReleasePredicate(rejectedRelease.RemoteMovie.Release));
+                if (rejectedRelease.Rejections.Any(r => r.Reason == DownloadRejectionReason.MultiEditionAcquisitionDisabled))
+                {
+                    continue; // Preserve stored work while acquisition is gated.
+                }
+
+                var matching = pending.Where(p => p.MovieId == rejectedRelease.RemoteMovie.Movie?.Id &&
+                    p.MovieEditionId == rejectedRelease.RemoteMovie.EditionContext?.Edition.Id)
+                    .Where(MatchingReleasePredicate(rejectedRelease.RemoteMovie.Release));
 
                 foreach (var pendingRelease in matching)
                 {

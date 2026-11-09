@@ -5,6 +5,7 @@ using FluentAssertions;
 using Moq;
 using NUnit.Framework;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.MovieImport;
 using NzbDrone.Core.MediaFiles.MovieImport.Aggregation;
@@ -82,6 +83,36 @@ namespace NzbDrone.Core.Test.MediaFiles.MovieImport
                 .Returns(_fileInfo);
 
             GivenVideoFiles(new List<string> { @"C:\Test\Unsorted\The.Movie.2018.DVDRip.XviD-OSiTV.avi".AsOsAgnostic() });
+        }
+
+        [Test]
+        public void recovered_context_is_available_before_augmentation_and_scoring()
+        {
+            GivenVideoFiles(new[] { @"C:\Test\Unsorted\Synthetic.Voyage.2026-SyntheticGroup.mkv".AsOsAgnostic() });
+            var context = new MovieEditionContext(new MovieEdition { Id = 2, MovieId = _movie.Id }, _movie.QualityProfile, null, true);
+            var item = new DownloadClientItem { DownloadId = "synthetic-download", Title = "Synthetic.Voyage.2026-SyntheticGroup" };
+            Mocker.GetMock<ITrackedDownloadService>().Setup(s => s.Find(item.DownloadId))
+                .Returns(new TrackedDownload { RemoteMovie = new RemoteMovie { Movie = _movie, EditionContext = context } });
+            GivenAugmentationSuccess();
+            GivenSpecifications(_pass1);
+
+            var results = Subject.GetImportDecisions(_videoFiles, _movie, item, null, true, false);
+
+            results.Single().LocalMovie.EditionContext.Should().BeSameAs(context);
+            Mocker.GetMock<IAggregationService>().Verify(s => s.Augment(It.Is<LocalMovie>(m => m.EditionContext == context), item), Times.Once());
+        }
+
+        [Test]
+        public void unresolved_recovery_is_rejected_before_augmentation()
+        {
+            GivenVideoFiles(new[] { @"C:\Test\Unsorted\Synthetic.Voyage.2026-SyntheticGroup.mkv".AsOsAgnostic() });
+            var item = new DownloadClientItem { DownloadId = "synthetic-download", Title = "Synthetic.Voyage.2026-SyntheticGroup" };
+            Mocker.GetMock<ITrackedDownloadService>().Setup(s => s.Find(item.DownloadId))
+                .Returns(new TrackedDownload { EditionRecoveryError = "Synthetic recovery conflict" });
+            GivenSpecifications(_pass1);
+            var results = Subject.GetImportDecisions(_videoFiles, _movie, item, null, true, false);
+            results.Single().Approved.Should().BeFalse();
+            Mocker.GetMock<IAggregationService>().Verify(s => s.Augment(It.IsAny<LocalMovie>(), item), Times.Never());
         }
 
         private void GivenSpecifications(params Mock<IImportDecisionEngineSpecification>[] mocks)
