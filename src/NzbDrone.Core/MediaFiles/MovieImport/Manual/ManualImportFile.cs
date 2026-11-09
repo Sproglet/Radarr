@@ -15,6 +15,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
         public string ReleaseGroup { get; set; }
         public int IndexerFlags { get; set; }
         public string DownloadId { get; set; }
+        public int? DownloadClientId { get; set; }
         public int MovieId { get; set; }
         public int? MovieEditionId { get; set; }
 

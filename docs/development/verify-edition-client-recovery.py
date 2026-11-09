@@ -74,7 +74,7 @@ class SyntheticSab:
                 elif mode == "history":
                     slots = [] if owner.deleted or owner.mode == "downloading" else [{
                         "nzo_id": SHARED, "name": "opaque-synthetic", "category": "movies", "bytes": 104857600,
-                        "status": "Completed" if owner.mode == "completed" else "Failed",
+                        "status": {"completed": "Completed", "failed": "Failed", "extracting": "Extracting"}[owner.mode],
                         "fail_message": "Synthetic failed download" if owner.mode == "failed" else "", "storage": str(owner.output),
                     }]
                     result = {"history": {"slots": slots, "noofslots": len(slots)}}
@@ -171,6 +171,67 @@ def verify_completions(clients, before):
     print("PASS: both client-driven upgrades completed without acquisition or client deletion", flush=True)
 
 
+def expect_bad_request(path, data=None):
+    try:
+        original_api(path, data)
+    except urllib.error.HTTPError as error:
+        assert error.code == 400, (error.code, error.read().decode())
+    else:
+        raise AssertionError("Expected HTTP 400: " + path)
+
+
+def verify_manual(clients):
+    before = p.snapshot()
+    files = []
+    for client in clients:
+        path = p.source("SyntheticManualClient" + str(client.number), {1: "yellow", 2: "purple"}[client.number])
+        client.output = path.parent
+        client.mode = "extracting"
+        files.append({"path": str(path), "downloadId": SHARED, "downloadClientId": client.client_id,
+            "movieId": 1, "movieEditionId": client.number, "quality": {"quality": {"id": 7}, "revision": {"version": 1}},
+            "languages": [{"id": 1}], "releaseGroup": "SyntheticGroup", "indexerFlags": 0})
+    queue([1, 2])
+    expect_bad_request("api/v3/manualimport?downloadId=" + SHARED)
+    expect_bad_request("api/v3/manualimport?downloadClientId=41&movieId=1")
+    expect_bad_request("api/v3/manualimport?downloadId=" + SHARED + "&downloadClientId=999")
+    expect_bad_request("api/v3/manualimport", [dict(files[0], downloadClientId=None)])
+    expect_bad_request("api/v3/manualimport", [dict(files[0], downloadClientId=999)])
+    for file in files:
+        preview = p.api("api/v3/manualimport?downloadId=" + SHARED + "&downloadClientId=" + str(file["downloadClientId"]))
+        assert len(preview) == 1, preview
+        assert preview[0]["movieEditionId"] == file["movieEditionId"] and preview[0]["downloadClientId"] == file["downloadClientId"], preview
+        assert preview[0]["customFormatScore"] == {41: 11, 42: 77}[file["downloadClientId"]], preview
+        processed = p.api("api/v3/manualimport", [file])[0]
+        assert processed["movieEditionId"] == file["movieEditionId"] and processed["downloadClientId"] == file["downloadClientId"], processed
+    wrong = dict(files[1], movieEditionId=1)
+    processed = p.api("api/v3/manualimport", [wrong])[0]
+    assert any("saved assignment" in r["reason"] for r in processed["rejections"]), processed
+    try:
+        p.command("ManualImport", importMode="copy", files=[files[0], wrong])
+    except AssertionError as error:
+        assert "failed" in str(error), error
+    else:
+        raise AssertionError("Mismatched saved assignment must reject batch")
+    assert p.snapshot() == before
+    assert not [r for r in p.rows("DownloadHistory") if r["EventType"] == 2]
+    print("PASS: client-qualified previews/reprocessing stay assigned; ambiguous IDs and a mismatched batch reject before replacement", flush=True)
+    for file in files:
+        previous = p.snapshot()
+        p.command("ManualImport", importMode="copy", files=[file])
+        current = p.snapshot()
+        target = file["movieEditionId"]
+        assert current[target][0] != previous[target][0] and current[target][5] != previous[target][5]
+        assert current[3 - target] == previous[3 - target]
+        terminal = [r for r in p.rows("DownloadHistory") if r["EventType"] == 2]
+        assert {(r["DownloadClientId"], r["MovieEditionId"]) for r in terminal} == ({(41, 1)} if target == 1 else {(41, 1), (42, 2)}), terminal
+        p.stop()
+        p.start()
+        queue([2] if target == 1 else [])
+        assert p.snapshot() == current
+    assert all(not c.deleted and not c.rejected for c in clients)
+    print("PASS: both same-ID manual imports replace only their saved edition, settle the correct client and survive restart", flush=True)
+
+
 def run():
     p.run()
     custom = p.api("api/v3/customformat", {"name": "Synthetic Queue Score", "includeCustomFormatWhenRenaming": False,
@@ -209,6 +270,9 @@ def run():
     assert {k: r["id"] for k, r in restored.items()} == {k: r["id"] for k, r in first.items()}
     assert p.snapshot() == before
     print("PASS: both assignments and client-specific queue IDs survive an application process restart and rule edits", flush=True)
+    if scenario == "manual":
+        verify_manual(clients)
+        return
     if scenario == "completed":
         verify_completions(clients, before)
         return

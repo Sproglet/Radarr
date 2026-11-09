@@ -27,7 +27,9 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Specifications
                 return ImportSpecDecision.Accept();
             }
 
-            var grabbedHistory = _historyService.FindByDownloadId(downloadClientItem.DownloadId)
+            var grabbedHistory = (downloadClientItem.DownloadClientInfo?.Id > 0
+                ? _historyService.FindByDownloadId(downloadClientItem.DownloadClientInfo.Id, downloadClientItem.DownloadId)
+                : _historyService.FindByDownloadId(downloadClientItem.DownloadId))
                 .Where(h => h.EventType == MovieHistoryEventType.Grabbed)
                 .ToList();
 

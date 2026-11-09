@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.AspNetCore.Http;
@@ -26,14 +27,24 @@ namespace Radarr.Api.V3.ManualImport
 
         [HttpGet]
         [Produces("application/json")]
-        public Ok<List<ManualImportResource>> GetMediaFiles(string folder, string downloadId, int? movieId, bool filterExistingFiles = true)
+        public Ok<List<ManualImportResource>> GetMediaFiles(string folder, string downloadId, int? movieId, bool filterExistingFiles = true, int? downloadClientId = null)
         {
-            if (movieId.HasValue && downloadId.IsNullOrWhiteSpace())
+            if (movieId.HasValue && downloadId.IsNullOrWhiteSpace() && !downloadClientId.HasValue)
             {
                 return TypedResults.Ok(_manualImportService.GetMediaFiles(movieId.Value).ToResource().Select(AddQualityWeight).ToList());
             }
 
-            return TypedResults.Ok(_manualImportService.GetMediaFiles(folder, downloadId, movieId, filterExistingFiles).ToResource().Select(AddQualityWeight).ToList());
+            try
+            {
+                var files = downloadClientId.HasValue
+                    ? _manualImportService.GetMediaFiles(folder, downloadId, movieId, filterExistingFiles, downloadClientId)
+                    : _manualImportService.GetMediaFiles(folder, downloadId, movieId, filterExistingFiles);
+                return TypedResults.Ok(files.ToResource().Select(AddQualityWeight).ToList());
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
         }
 
         [HttpPost]
@@ -47,10 +58,21 @@ namespace Radarr.Api.V3.ManualImport
 
             foreach (var item in items)
             {
-                var processedItem = _manualImportService.ReprocessItem(item.Path, item.DownloadId, item.MovieId, item.ReleaseGroup, item.Quality, item.Languages, item.IndexerFlags, item.MovieEditionId);
+                ManualImportItem processedItem;
+                try
+                {
+                    processedItem = item.DownloadClientId.HasValue
+                        ? _manualImportService.ReprocessItem(item.Path, item.DownloadId, item.MovieId, item.ReleaseGroup, item.Quality, item.Languages, item.IndexerFlags, item.MovieEditionId, item.DownloadClientId)
+                        : _manualImportService.ReprocessItem(item.Path, item.DownloadId, item.MovieId, item.ReleaseGroup, item.Quality, item.Languages, item.IndexerFlags, item.MovieEditionId);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    throw new BadRequestException(ex.Message);
+                }
 
                 item.Movie = processedItem.Movie.ToResource(0);
                 item.MovieEditionId = processedItem.MovieEditionId;
+                item.DownloadClientId = processedItem.DownloadClientId;
                 item.IndexerFlags = processedItem.IndexerFlags;
                 item.Rejections = processedItem.Rejections.Select(r => r.ToResource());
                 item.CustomFormats = processedItem.CustomFormats.ToResource(false);

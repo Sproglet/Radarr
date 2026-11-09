@@ -17,6 +17,7 @@ namespace Radarr.Api.V3.ManualImport
         public List<Language> Languages { get; set; }
         public string ReleaseGroup { get; set; }
         public string DownloadId { get; set; }
+        public int? DownloadClientId { get; set; }
         public List<CustomFormatResource> CustomFormats { get; set; }
         public int CustomFormatScore { get; set; }
         public int IndexerFlags { get; set; }

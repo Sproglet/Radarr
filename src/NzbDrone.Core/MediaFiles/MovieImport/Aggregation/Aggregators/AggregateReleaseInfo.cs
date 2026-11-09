@@ -24,7 +24,9 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Aggregation.Aggregators
                 return localMovie;
             }
 
-            var grabbedHistories = _historyService.FindByDownloadId(downloadClientItem.DownloadId)
+            var grabbedHistories = (downloadClientItem.DownloadClientInfo?.Id > 0
+                ? _historyService.FindByDownloadId(downloadClientItem.DownloadClientInfo.Id, downloadClientItem.DownloadId)
+                : _historyService.FindByDownloadId(downloadClientItem.DownloadId))
                 .Where(h => h.EventType == MovieHistoryEventType.Grabbed)
                 .ToList();
 

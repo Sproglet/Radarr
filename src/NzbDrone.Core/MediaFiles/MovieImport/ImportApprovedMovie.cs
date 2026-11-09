@@ -106,7 +106,9 @@ namespace NzbDrone.Core.MediaFiles.MovieImport
 
                     if (downloadClientItem?.DownloadId.IsNotNullOrWhiteSpace() == true)
                     {
-                        var grabHistory = _historyService.FindByDownloadId(downloadClientItem.DownloadId)
+                        var grabHistory = (downloadClientItem.DownloadClientInfo?.Id > 0
+                            ? _historyService.FindByDownloadId(downloadClientItem.DownloadClientInfo.Id, downloadClientItem.DownloadId)
+                            : _historyService.FindByDownloadId(downloadClientItem.DownloadId))
                             .OrderByDescending(h => h.Date)
                             .FirstOrDefault(h => h.EventType == MovieHistoryEventType.Grabbed);
 

@@ -14,6 +14,7 @@ using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Extras;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Subtitles;
+using NzbDrone.Core.History;
 using NzbDrone.Core.Languages;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Commands;
@@ -181,6 +182,76 @@ namespace NzbDrone.Core.Test.MediaFiles
                     new ManualImportFile { MovieId = _movie.Id, MovieEditionId = edition.Id, Path = Source(marker), Quality = new QualityModel(Quality.Bluray1080p), Languages = new List<Language> { Language.English }, ReleaseGroup = "SyntheticGroup" }
                 }
             });
+        }
+
+        private ManualImportFile ClientFile(MovieEdition edition, int clientId)
+        {
+            const string downloadId = "synthetic-shared-manual-id";
+            var path = Source("SyntheticClient" + clientId);
+            var tracked = new TrackedDownload
+            {
+                DownloadClient = clientId,
+                DownloadItem = new DownloadClientItem
+                {
+                    DownloadId = downloadId,
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Id = clientId },
+                    OutputPath = new OsPath(Path.GetDirectoryName(path))
+                },
+                RemoteMovie = new RemoteMovie { Movie = _movie, EditionContext = _contexts.Resolve(_movie, edition.Id) }
+            };
+            Mocker.GetMock<ITrackedDownloadService>().Setup(s => s.Find(clientId, downloadId)).Returns(tracked);
+            Mocker.GetMock<IHistoryService>().Setup(s => s.FindByDownloadId(clientId, downloadId)).Returns(new List<MovieHistory>());
+            return new ManualImportFile
+            {
+                MovieId = _movie.Id, MovieEditionId = edition.Id, DownloadClientId = clientId, DownloadId = downloadId,
+                Path = path, Quality = new QualityModel(Quality.Bluray1080p),
+                Languages = new List<Language> { Language.English }, ReleaseGroup = "SyntheticGroup"
+            };
+        }
+
+        [Test]
+        public void manual_batch_should_settle_both_clients_with_the_same_download_id_independently()
+        {
+            var files = new List<ManualImportFile> { ClientFile(_imax, 41), ClientFile(_directors, 42) };
+            Mocker.Resolve<ManualImportService>().Execute(new ManualImportCommand { ImportMode = ImportMode.Copy, Files = files });
+            Db.All<MovieFile>().Should().HaveCount(2);
+            Db.All<SubtitleFile>().Should().HaveCount(2);
+            Mocker.GetMock<IEventAggregator>().Verify(s => s.PublishEvent(It.Is<DownloadCompletedEvent>(e => e.TrackedDownload.DownloadClient == 41)), Times.Once());
+            Mocker.GetMock<IEventAggregator>().Verify(s => s.PublishEvent(It.Is<DownloadCompletedEvent>(e => e.TrackedDownload.DownloadClient == 42)), Times.Once());
+            Mocker.GetMock<ITrackedDownloadService>().Verify(s => s.Find(It.IsAny<string>()), Times.Never());
+            Mocker.GetMock<IHistoryService>().Verify(s => s.FindByDownloadId(41, "synthetic-shared-manual-id"), Times.Once());
+            Mocker.GetMock<IHistoryService>().Verify(s => s.FindByDownloadId(42, "synthetic-shared-manual-id"), Times.Once());
+            Mocker.GetMock<IHistoryService>().Verify(s => s.FindByDownloadId(It.IsAny<string>()), Times.Never());
+        }
+
+        [Test]
+        public void wrong_saved_edition_in_later_manual_item_should_reject_entire_batch_before_import()
+        {
+            ManualImport(_imax, "SyntheticExistingImax");
+            ManualImport(_directors, "SyntheticExistingDirectors");
+            var ids = Db.All<MovieFile>().Select(f => f.Id).ToList();
+            var files = new List<ManualImportFile> { ClientFile(_imax, 41), ClientFile(_directors, 42) };
+            files[1].MovieEditionId = _imax.Id;
+            _recycled.Clear();
+            Action import = () => Mocker.Resolve<ManualImportService>().Execute(new ManualImportCommand { ImportMode = ImportMode.Copy, Files = files });
+            import.Should().Throw<InvalidOperationException>().WithMessage("*saved assignment*");
+            Db.All<MovieFile>().Select(f => f.Id).Should().BeEquivalentTo(ids);
+            _recycled.Should().BeEmpty();
+            Mocker.GetMock<IEventAggregator>().Verify(s => s.PublishEvent(It.IsAny<DownloadCompletedEvent>()), Times.Never());
+        }
+
+        [TestCase(0, "synthetic-shared-manual-id")]
+        [TestCase(41, null)]
+        [TestCase(999, "synthetic-shared-manual-id")]
+        public void explicit_unknown_or_invalid_manual_client_should_reject_before_import(int clientId, string downloadId)
+        {
+            var file = ClientFile(_imax, 41);
+            file.DownloadClientId = clientId;
+            file.DownloadId = downloadId;
+            Action import = () => Mocker.Resolve<ManualImportService>().Execute(new ManualImportCommand { Files = new List<ManualImportFile> { file } });
+            import.Should().Throw<InvalidOperationException>();
+            Db.All<MovieFile>().Should().BeEmpty();
+            _recycled.Should().BeEmpty();
         }
 
         [Test]

@@ -27,6 +27,7 @@ namespace Radarr.Api.V3.ManualImport
         public List<Language> Languages { get; set; }
         public int QualityWeight { get; set; }
         public string DownloadId { get; set; }
+        public int? DownloadClientId { get; set; }
         public List<CustomFormatResource> CustomFormats { get; set; }
         public int CustomFormatScore { get; set; }
         public int IndexerFlags { get; set; }
@@ -64,6 +65,7 @@ namespace Radarr.Api.V3.ManualImport
 
                 // QualityWeight
                 DownloadId = model.DownloadId,
+                DownloadClientId = model.DownloadClientId,
                 IndexerFlags = model.IndexerFlags,
                 Rejections = model.Rejections.Select(r => r.ToResource())
             };

@@ -24,8 +24,10 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
     {
         List<ManualImportItem> GetMediaFiles(int movieId);
         List<ManualImportItem> GetMediaFiles(string path, string downloadId, int? movieId, bool filterExistingFiles);
+        List<ManualImportItem> GetMediaFiles(string path, string downloadId, int? movieId, bool filterExistingFiles, int? downloadClientId);
         ManualImportItem ReprocessItem(string path, string downloadId, int movieId, string releaseGroup, QualityModel quality, List<Language> languages, int indexerFlags);
         ManualImportItem ReprocessItem(string path, string downloadId, int movieId, string releaseGroup, QualityModel quality, List<Language> languages, int indexerFlags, int? movieEditionId);
+        ManualImportItem ReprocessItem(string path, string downloadId, int movieId, string releaseGroup, QualityModel quality, List<Language> languages, int indexerFlags, int? movieEditionId, int? downloadClientId);
     }
 
     public class ManualImportService : IExecute<ManualImportCommand>, IManualImportService
@@ -110,16 +112,26 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
 
         public List<ManualImportItem> GetMediaFiles(string path, string downloadId, int? movieId, bool filterExistingFiles)
         {
+            return GetMediaFiles(path, downloadId, movieId, filterExistingFiles, null);
+        }
+
+        public List<ManualImportItem> GetMediaFiles(string path, string downloadId, int? movieId, bool filterExistingFiles, int? downloadClientId)
+        {
+            if (downloadClientId.HasValue && string.IsNullOrWhiteSpace(downloadId))
+            {
+                throw new InvalidOperationException("A download ID is required with a download client.");
+            }
+
             if (downloadId.IsNotNullOrWhiteSpace())
             {
-                var trackedDownload = _trackedDownloadService.Find(downloadId);
+                var trackedDownload = GetTrackedDownload(downloadId, downloadClientId);
 
                 if (trackedDownload == null)
                 {
                     return new List<ManualImportItem>();
                 }
 
-                path = trackedDownload.ImportItem.OutputPath.FullPath;
+                path = trackedDownload.ImportItem?.OutputPath.FullPath ?? trackedDownload.DownloadItem.OutputPath.FullPath;
             }
 
             if (!_diskProvider.FolderExists(path))
@@ -130,10 +142,10 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
                 }
 
                 var rootFolder = Path.GetDirectoryName(path);
-                return new List<ManualImportItem> { ProcessFile(rootFolder, rootFolder, path, downloadId) };
+                return WithClient(new List<ManualImportItem> { ProcessFile(rootFolder, rootFolder, path, downloadId, null, downloadClientId) }, downloadClientId);
             }
 
-            return ProcessFolder(path, path, downloadId, movieId, filterExistingFiles);
+            return WithClient(ProcessFolder(path, path, downloadId, movieId, filterExistingFiles, downloadClientId), downloadClientId);
         }
 
         public ManualImportItem ReprocessItem(string path, string downloadId, int movieId, string releaseGroup, QualityModel quality, List<Language> languages, int indexerFlags)
@@ -142,6 +154,11 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
         }
 
         public ManualImportItem ReprocessItem(string path, string downloadId, int movieId, string releaseGroup, QualityModel quality, List<Language> languages, int indexerFlags, int? movieEditionId)
+        {
+            return ReprocessItem(path, downloadId, movieId, releaseGroup, quality, languages, indexerFlags, movieEditionId, null);
+        }
+
+        public ManualImportItem ReprocessItem(string path, string downloadId, int movieId, string releaseGroup, QualityModel quality, List<Language> languages, int indexerFlags, int? movieEditionId, int? downloadClientId)
         {
             var rootFolder = Path.GetDirectoryName(path);
             var movie = _movieService.GetMovie(movieId);
@@ -154,7 +171,8 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
                 _logger.Debug("Language couldn't be parsed from release, fallback to movie original language: {0}", movie.MovieMetadata.Value.OriginalLanguage.Name);
             }
 
-            var downloadClientItem = GetTrackedDownload(downloadId)?.DownloadItem;
+            var tracked = GetTrackedDownload(downloadId, downloadClientId);
+            var downloadClientItem = tracked?.DownloadItem;
             var finalReleaseGroup = releaseGroup.IsNullOrWhiteSpace()
                 ? ReleaseGroupParser.ParseReleaseGroup(path)
                 : releaseGroup;
@@ -181,6 +199,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
             try
             {
                 localMovie.EditionContext = _editionContexts.Resolve(movie, movieEditionId, path);
+                ValidateTrackedAssignment(localMovie, tracked);
             }
             catch (InvalidOperationException ex)
             {
@@ -202,7 +221,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
             return MapItem(_importDecisionMaker.GetDecision(localMovie, downloadClientItem), rootFolder, downloadId, null);
         }
 
-        private List<ManualImportItem> ProcessFolder(string rootFolder, string baseFolder, string downloadId, int? movieId, bool filterExistingFiles)
+        private List<ManualImportItem> ProcessFolder(string rootFolder, string baseFolder, string downloadId, int? movieId, bool filterExistingFiles, int? downloadClientId = null)
         {
             DownloadClientItem downloadClientItem = null;
             Movie movie = null;
@@ -227,7 +246,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
 
             if (downloadId.IsNotNullOrWhiteSpace())
             {
-                var trackedDownload = _trackedDownloadService.Find(downloadId);
+                var trackedDownload = GetTrackedDownload(downloadId, downloadClientId);
                 downloadClientItem = trackedDownload.DownloadItem;
 
                 if (movie == null)
@@ -253,8 +272,8 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
 
                 var subfolders = _diskScanService.FilterPaths(rootFolder, _diskProvider.GetDirectories(baseFolder));
 
-                var processedFiles = files.Select(file => ProcessFile(rootFolder, baseFolder, file, downloadId));
-                var processedFolders = subfolders.SelectMany(subfolder => ProcessFolder(rootFolder, subfolder, downloadId, null, filterExistingFiles));
+                var processedFiles = files.Select(file => ProcessFile(rootFolder, baseFolder, file, downloadId, null, downloadClientId));
+                var processedFolders = subfolders.SelectMany(subfolder => ProcessFolder(rootFolder, subfolder, downloadId, null, filterExistingFiles, downloadClientId));
 
                 return processedFiles.Concat(processedFolders).Where(i => i != null).ToList();
             }
@@ -266,11 +285,11 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
             return decisions.Select(decision => MapItem(decision, rootFolder, downloadId, directoryInfo.Name)).ToList();
         }
 
-        private ManualImportItem ProcessFile(string rootFolder, string baseFolder, string file, string downloadId, Movie movie = null)
+        private ManualImportItem ProcessFile(string rootFolder, string baseFolder, string file, string downloadId, Movie movie = null, int? downloadClientId = null)
         {
             try
             {
-                var trackedDownload = GetTrackedDownload(downloadId);
+                var trackedDownload = GetTrackedDownload(downloadId, downloadClientId);
                 var relativeFile = baseFolder.GetRelativePath(file);
 
                 if (movie == null)
@@ -361,16 +380,50 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
             return !(movie.Path.PathEquals(folder) || movie.Path.IsParentPath(folder));
         }
 
-        private TrackedDownload GetTrackedDownload(string downloadId)
+        private static List<ManualImportItem> WithClient(List<ManualImportItem> items, int? clientId)
         {
-            if (downloadId.IsNotNullOrWhiteSpace())
+            foreach (var item in items.Where(i => i != null))
             {
-                var trackedDownload = _trackedDownloadService.Find(downloadId);
-
-                return trackedDownload;
+                item.DownloadClientId = clientId ?? item.DownloadClientId;
             }
 
-            return null;
+            return items;
+        }
+
+        private static void ValidateTrackedAssignment(LocalMovie local, TrackedDownload tracked)
+        {
+            if (tracked == null)
+            {
+                return;
+            }
+
+            if (tracked.EditionRecoveryError != null || tracked.RemoteMovie?.EditionRecoveryError != null ||
+                tracked.RemoteMovie?.Movie?.Id != local.Movie.Id ||
+                (tracked.RemoteMovie.EditionContext != null && tracked.RemoteMovie.EditionContext.Edition.Id != local.EditionContext?.Edition.Id))
+            {
+                throw new InvalidOperationException("The selected movie/edition conflicts with this download's saved assignment; resolve it before importing.");
+            }
+        }
+
+        private TrackedDownload GetTrackedDownload(string downloadId, int? downloadClientId = null)
+        {
+            if (downloadClientId.HasValue && (downloadClientId <= 0 || string.IsNullOrWhiteSpace(downloadId)))
+            {
+                throw new InvalidOperationException("A positive client ID and a download ID are required.");
+            }
+
+            if (string.IsNullOrWhiteSpace(downloadId))
+            {
+                return null;
+            }
+
+            var tracked = downloadClientId.HasValue ? _trackedDownloadService.Find(downloadClientId.Value, downloadId) : _trackedDownloadService.Find(downloadId);
+            if (tracked == null && downloadClientId.HasValue)
+            {
+                throw new InvalidOperationException("The download is not tracked for the selected client.");
+            }
+
+            return tracked;
         }
 
         private ManualImportItem MapItem(ImportDecision decision, string rootFolder, string downloadId, string folderName)
@@ -382,6 +435,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
             item.RelativePath = rootFolder.GetRelativePath(decision.LocalMovie.Path);
             item.Name = Path.GetFileNameWithoutExtension(decision.LocalMovie.Path);
             item.DownloadId = downloadId;
+            item.DownloadClientId = decision.LocalMovie.DownloadItem?.DownloadClientInfo?.Id;
 
             item.Quality = decision.LocalMovie.Quality;
             item.Size = _diskProvider.GetFileSize(decision.LocalMovie.Path);
@@ -437,6 +491,14 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
         {
             _logger.ProgressTrace("Manually importing {0} files using mode {1}", message.Files.Count, message.ImportMode);
 
+            // Validate all supplied download assignments before the first filesystem mutation.
+            foreach (var file in message.Files.Where(f => f.DownloadId.IsNotNullOrWhiteSpace() || f.DownloadClientId.HasValue))
+            {
+                var tracked = GetTrackedDownload(file.DownloadId, file.DownloadClientId);
+                var movie = _movieService.GetMovie(file.MovieId);
+                ValidateTrackedAssignment(new LocalMovie { Movie = movie, EditionContext = _editionContexts.Resolve(movie, file.MovieEditionId, file.Path) }, tracked);
+            }
+
             var imported = new List<ImportResult>();
             var importedTrackedDownload = new List<ManuallyImportedFile>();
 
@@ -473,7 +535,8 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
 
                 if (file.DownloadId.IsNotNullOrWhiteSpace())
                 {
-                    trackedDownload = _trackedDownloadService.Find(file.DownloadId);
+                    trackedDownload = GetTrackedDownload(file.DownloadId, file.DownloadClientId);
+                    ValidateTrackedAssignment(localMovie, trackedDownload);
                     localMovie.DownloadClientMovieInfo = trackedDownload?.RemoteMovie?.ParsedMovieInfo;
                     localMovie.DownloadItem = trackedDownload?.DownloadItem;
                 }
@@ -523,12 +586,16 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
 
             _logger.ProgressTrace("Manually imported {0} files", imported.Count);
 
-            foreach (var groupedTrackedDownload in importedTrackedDownload.GroupBy(i => i.TrackedDownload.DownloadItem.DownloadId).ToList())
+            foreach (var groupedTrackedDownload in importedTrackedDownload.GroupBy(i => new
+            {
+                ClientId = i.TrackedDownload.DownloadClient,
+                i.TrackedDownload.DownloadItem.DownloadId
+            }).ToList())
             {
                 var trackedDownload = groupedTrackedDownload.First().TrackedDownload;
 
                 var importMovie = groupedTrackedDownload.First().ImportResult.ImportDecision.LocalMovie.Movie;
-                var outputPath = trackedDownload.ImportItem.OutputPath.FullPath;
+                var outputPath = trackedDownload.ImportItem?.OutputPath.FullPath ?? trackedDownload.DownloadItem.OutputPath.FullPath;
 
                 if (_diskProvider.FolderExists(outputPath))
                 {

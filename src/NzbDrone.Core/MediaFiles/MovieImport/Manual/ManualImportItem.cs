@@ -20,6 +20,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
         public List<Language> Languages { get; set; } = new();
         public string ReleaseGroup { get; set; }
         public string DownloadId { get; set; }
+        public int? DownloadClientId { get; set; }
         public List<CustomFormat> CustomFormats { get; set; } = new();
         public int CustomFormatScore { get; set; }
         public int IndexerFlags { get; set; }
