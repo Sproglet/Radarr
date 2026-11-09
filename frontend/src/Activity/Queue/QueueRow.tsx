@@ -42,6 +42,7 @@ interface QueueRowProps {
   id: number;
   movieId?: number;
   downloadId?: string;
+  downloadClientId?: number;
   title: string;
   status: string;
   trackedDownloadStatus?: QueueTrackedDownloadStatus;
@@ -76,6 +77,7 @@ function QueueRow(props: QueueRowProps) {
     id,
     movieId,
     downloadId,
+    downloadClientId,
     title,
     status,
     trackedDownloadStatus,
@@ -341,6 +343,7 @@ function QueueRow(props: QueueRowProps) {
       <InteractiveImportModal
         isOpen={isInteractiveImportModalOpen}
         downloadId={downloadId}
+        downloadClientId={downloadClientId}
         modalTitle={title}
         onModalClose={handleInteractiveImportModalClose}
       />

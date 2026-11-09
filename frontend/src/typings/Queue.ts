@@ -39,6 +39,9 @@ interface Queue extends ModelBase {
   statusMessages: StatusMessage[];
   errorMessage: string;
   downloadId: string;
+  downloadClientId?: number;
+  movieEditionId?: number;
+  movieEditionName?: string;
   protocol: DownloadProtocol;
   downloadClient: string;
   outputPath: string;

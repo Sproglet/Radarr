@@ -17,6 +17,16 @@ export const section = 'interactiveImport';
 
 const MAXIMUM_RECENT_FOLDERS = 10;
 
+function applyImportChanges(item, changes) {
+  const updated = Object.assign({}, item, changes);
+
+  if (changes.movie && changes.movie.id !== item.movie?.id) {
+    updated.movieEditionId = undefined;
+  }
+
+  return updated;
+}
+
 let abortCurrentRequest = null;
 let currentIds = [];
 
@@ -165,11 +175,13 @@ export const actionHandlers = handleThunks({
         id,
         path: item.path,
         movieId: item.movie ? item.movie.id : undefined,
+        movieEditionId: item.movieEditionId,
         quality: item.quality,
         languages: item.languages,
         releaseGroup: item.releaseGroup,
         indexerFlags: item.indexerFlags,
-        downloadId: item.downloadId
+        downloadId: item.downloadId,
+        downloadClientId: item.downloadClientId
       };
     });
 
@@ -221,7 +233,7 @@ export const reducers = createHandleActions({
     const newState = Object.assign({}, state);
     const items = newState.items;
     const index = items.findIndex((item) => item.id === id);
-    const item = Object.assign({}, items[index], payload);
+    const item = applyImportChanges(items[index], payload);
 
     newState.items = [...items];
     newState.items.splice(index, 1, item);
@@ -236,7 +248,7 @@ export const reducers = createHandleActions({
 
     ids.forEach((id) => {
       const index = items.findIndex((item) => item.id === id);
-      const item = Object.assign({}, items[index], otherPayload);
+      const item = applyImportChanges(items[index], otherPayload);
 
       items.splice(index, 1, item);
     });

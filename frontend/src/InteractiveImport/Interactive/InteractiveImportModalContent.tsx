@@ -192,6 +192,7 @@ const importModeSelector = createSelector(
 
 export interface InteractiveImportModalContentProps {
   downloadId?: string;
+  downloadClientId?: number;
   movieId?: number;
   showMovie?: boolean;
   allowMovieChange?: boolean;
@@ -213,6 +214,7 @@ function InteractiveImportModalContent(
 ) {
   const {
     downloadId,
+    downloadClientId,
     movieId,
     allowMovieChange = true,
     showMovie = true,
@@ -338,6 +340,7 @@ function InteractiveImportModalContent(
       dispatch(
         fetchInteractiveImportItems({
           downloadId,
+          downloadClientId,
           movieId,
           folder,
           filterExistingFiles,
@@ -493,11 +496,13 @@ function InteractiveImportModalContent(
           path: item.path,
           folderName: item.folderName,
           movieId: movie.id,
+          movieEditionId: item.movieEditionId,
           releaseGroup,
           quality,
           languages,
           indexerFlags,
-          downloadId,
+          downloadId: item.downloadId ?? downloadId,
+          downloadClientId: item.downloadClientId ?? downloadClientId,
           movieFileId,
         });
       }
@@ -532,6 +537,7 @@ function InteractiveImportModalContent(
     }
   }, [
     downloadId,
+    downloadClientId,
     showImportMode,
     importMode,
     items,
@@ -557,13 +563,21 @@ function InteractiveImportModalContent(
       dispatch(
         fetchInteractiveImportItems({
           downloadId,
+          downloadClientId,
           movieId,
           folder,
           filterExistingFiles: filter,
         })
       );
     },
-    [downloadId, movieId, folder, setFilterExistingFiles, dispatch]
+    [
+      downloadId,
+      downloadClientId,
+      movieId,
+      folder,
+      setFilterExistingFiles,
+      dispatch,
+    ]
   );
 
   const onImportModeChange = useCallback<
