@@ -15,6 +15,9 @@ namespace NzbDrone.Core.Download.History
         bool DownloadAlreadyImported(string downloadId);
         DownloadHistory GetLatestDownloadHistoryItem(string downloadId);
         DownloadHistory GetLatestGrab(string downloadId);
+        DownloadHistory GetLatestGrab(int clientId, string downloadId);
+        DownloadHistory GetLatestDownloadHistoryItem(int clientId, string downloadId);
+        bool DownloadAlreadyImported(int clientId, string downloadId);
     }
 
     public class DownloadHistoryService : IDownloadHistoryService,
@@ -36,7 +39,7 @@ namespace NzbDrone.Core.Download.History
 
         public bool DownloadAlreadyImported(string downloadId)
         {
-            var events = _repository.FindByDownloadId(downloadId);
+            var events = GetEvents(downloadId);
 
             // Events are ordered by date descending, if a grabbed event comes before an imported event then it was never imported
             // or grabbed again after importing and should be reprocessed.
@@ -58,7 +61,7 @@ namespace NzbDrone.Core.Download.History
 
         public DownloadHistory GetLatestDownloadHistoryItem(string downloadId)
         {
-            var events = _repository.FindByDownloadId(downloadId);
+            var events = GetEvents(downloadId);
 
             // Events are ordered by date descending. We'll return the most recent expected event.
             foreach (var e in events)
@@ -89,8 +92,38 @@ namespace NzbDrone.Core.Download.History
 
         public DownloadHistory GetLatestGrab(string downloadId)
         {
-            return _repository.FindByDownloadId(downloadId)
+            return GetEvents(downloadId)
                               .FirstOrDefault(d => d.EventType == DownloadHistoryEventType.DownloadGrabbed);
+        }
+
+        private List<DownloadHistory> GetEvents(string downloadId)
+        {
+            var events = _repository.FindByDownloadId(downloadId);
+            if (events.Select(h => h.DownloadClientId).Distinct().Count() > 1)
+            {
+                throw new InvalidOperationException("Download history belongs to multiple clients. Supply the download-client ID.");
+            }
+
+            return events;
+        }
+
+        public DownloadHistory GetLatestGrab(int clientId, string downloadId)
+        {
+            return _repository.FindByDownloadId(clientId, downloadId).FirstOrDefault(h => h.EventType == DownloadHistoryEventType.DownloadGrabbed);
+        }
+
+        public DownloadHistory GetLatestDownloadHistoryItem(int clientId, string downloadId)
+        {
+            return _repository.FindByDownloadId(clientId, downloadId).FirstOrDefault(h => h.EventType is
+                DownloadHistoryEventType.DownloadGrabbed or DownloadHistoryEventType.DownloadImported or
+                DownloadHistoryEventType.DownloadFailed or DownloadHistoryEventType.DownloadIgnored);
+        }
+
+        public bool DownloadAlreadyImported(int clientId, string downloadId)
+        {
+            var latest = _repository.FindByDownloadId(clientId, downloadId).FirstOrDefault(h => h.EventType is
+                DownloadHistoryEventType.DownloadGrabbed or DownloadHistoryEventType.DownloadImported);
+            return latest?.EventType == DownloadHistoryEventType.DownloadImported;
         }
 
         public void Handle(MovieGrabbedEvent message)
@@ -171,7 +204,7 @@ namespace NzbDrone.Core.Download.History
 
         private void CopyGrabIdentity(DownloadHistory history, RemoteMovie remoteMovie)
         {
-            var grab = history.DownloadId.IsNullOrWhiteSpace() ? null : GetLatestGrab(history.DownloadId);
+            var grab = history.DownloadId.IsNullOrWhiteSpace() ? null : GetLatestGrab(history.DownloadClientId, history.DownloadId);
             if (grab != null && grab.MovieId == history.MovieId && grab.DownloadClientId == history.DownloadClientId)
             {
                 history.MovieEditionId = grab.MovieEditionId;
@@ -214,7 +247,7 @@ namespace NzbDrone.Core.Download.History
         public void Handle(DownloadFailedEvent message)
         {
             var clientId = message.DownloadClientId ?? message.TrackedDownload?.DownloadClient;
-            var grab = message.DownloadId.IsNullOrWhiteSpace() ? null : GetLatestGrab(message.DownloadId);
+            var grab = message.DownloadId.IsNullOrWhiteSpace() || !clientId.HasValue ? null : GetLatestGrab(clientId.Value, message.DownloadId);
             if (message.TrackedDownload == null &&
                 (!clientId.HasValue || grab == null || grab.MovieId != message.MovieId || grab.DownloadClientId != clientId ||
                     grab.MovieEditionId != message.MovieEditionId))

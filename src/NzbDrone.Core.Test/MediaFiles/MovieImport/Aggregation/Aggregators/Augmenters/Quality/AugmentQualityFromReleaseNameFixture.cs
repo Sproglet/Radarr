@@ -37,6 +37,7 @@ namespace NzbDrone.Core.Test.MediaFiles.MovieImport.Aggregation.Aggregators.Augm
 
             _downloadClientItem = Builder<DownloadClientItem>.CreateNew()
                                                              .Build();
+            _downloadClientItem.DownloadClientInfo = new DownloadClientItemClientInfo { Id = 9 };
         }
 
         [Test]
@@ -49,7 +50,7 @@ namespace NzbDrone.Core.Test.MediaFiles.MovieImport.Aggregation.Aggregators.Augm
         public void should_return_null_if_no_grabbed_history()
         {
             Mocker.GetMock<IDownloadHistoryService>()
-                  .Setup(s => s.GetLatestGrab(It.IsAny<string>()))
+                  .Setup(s => s.GetLatestGrab(It.IsAny<int>(), It.IsAny<string>()))
                   .Returns((DownloadHistory)null);
 
             Subject.AugmentQuality(_localMovie, _downloadClientItem).Should().BeNull();
@@ -61,7 +62,7 @@ namespace NzbDrone.Core.Test.MediaFiles.MovieImport.Aggregation.Aggregators.Augm
         public void should_return_augmented_quality(string title, QualitySource source, Confidence sourceConfidence, int resolution, Confidence resolutionConfidence)
         {
             Mocker.GetMock<IDownloadHistoryService>()
-                  .Setup(s => s.GetLatestGrab(It.IsAny<string>()))
+                  .Setup(s => s.GetLatestGrab(It.IsAny<int>(), It.IsAny<string>()))
                   .Returns(Builder<DownloadHistory>.CreateNew()
                                                    .With(h => h.SourceTitle = title)
                                                    .Build());

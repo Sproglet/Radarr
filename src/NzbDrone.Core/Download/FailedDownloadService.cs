@@ -140,7 +140,7 @@ namespace NzbDrone.Core.Download
 
         private List<MovieHistory> GetGrabbedHistory(TrackedDownload download)
         {
-            var history = _historyService.Find(download.DownloadItem.DownloadId, MovieHistoryEventType.Grabbed)
+            var history = _historyService.FindByDownloadId(download.DownloadClient, download.DownloadItem.DownloadId).Where(h => h.EventType == MovieHistoryEventType.Grabbed)
                 .OrderByDescending(h => h.Date).ToList();
             var remote = download.RemoteMovie;
             try
@@ -167,7 +167,7 @@ namespace NzbDrone.Core.Download
                     throw new InvalidOperationException("Failure grab history has conflicting or missing edition identity.");
                 }
 
-                var grab = _downloadHistory.GetLatestGrab(download.DownloadItem.DownloadId);
+                var grab = _downloadHistory.GetLatestGrab(download.DownloadClient, download.DownloadItem.DownloadId);
                 if (grab == null || grab.DownloadClientId != download.DownloadClient || grab.MovieId != remote.Movie.Id ||
                     grab.MovieEditionId != remote.EditionContext.Edition.Id)
                 {

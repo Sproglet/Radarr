@@ -130,7 +130,9 @@ namespace NzbDrone.Core.MediaFiles.MovieImport
 
                 if (downloadClientItem?.DownloadId.IsNotNullOrWhiteSpace() == true)
                 {
-                    var tracked = _trackedDownloadService.Find(downloadClientItem.DownloadId);
+                    var tracked = (downloadClientItem.DownloadClientInfo?.Id > 0
+                        ? _trackedDownloadService.Find(downloadClientItem.DownloadClientInfo.Id, downloadClientItem.DownloadId)
+                        : _trackedDownloadService.Find(downloadClientItem.DownloadId));
                     if (tracked?.EditionRecoveryError != null)
                     {
                         return new ImportDecision(localMovie, new ImportRejection(ImportRejectionReason.InvalidMovie, tracked.EditionRecoveryError));
@@ -154,7 +156,9 @@ namespace NzbDrone.Core.MediaFiles.MovieImport
                 {
                     if (downloadClientItem?.DownloadId.IsNotNullOrWhiteSpace() == true)
                     {
-                        var trackedDownload = _trackedDownloadService.Find(downloadClientItem.DownloadId);
+                        var trackedDownload = (downloadClientItem.DownloadClientInfo?.Id > 0
+                        ? _trackedDownloadService.Find(downloadClientItem.DownloadClientInfo.Id, downloadClientItem.DownloadId)
+                        : _trackedDownloadService.Find(downloadClientItem.DownloadId));
 
                         if (trackedDownload?.RemoteMovie?.Release?.IndexerFlags != null)
                         {

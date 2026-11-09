@@ -49,7 +49,7 @@ namespace NzbDrone.Core.Download
                     throw new InvalidOperationException("Edition recovery requires manual review before ignoring the download.");
                 }
 
-                grab = _history.GetLatestGrab(trackedDownload.DownloadItem.DownloadId);
+                grab = _history.GetLatestGrab(trackedDownload.DownloadClient, trackedDownload.DownloadItem.DownloadId);
                 if (grab != null && (grab.MovieId != movie.Id || grab.DownloadClientId != trackedDownload.DownloadClient))
                 {
                     throw new InvalidOperationException("Ignore grab belongs to another movie or client; manual review required.");

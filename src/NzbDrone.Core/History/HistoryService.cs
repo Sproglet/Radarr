@@ -27,6 +27,7 @@ namespace NzbDrone.Core.History
         MovieHistory Get(int historyId);
         List<MovieHistory> Find(string downloadId, MovieHistoryEventType eventType);
         List<MovieHistory> FindByDownloadId(string downloadId);
+        List<MovieHistory> FindByDownloadId(int clientId, string downloadId);
         List<MovieHistory> GetByMovieId(int movieId, MovieHistoryEventType? eventType);
         void UpdateMany(List<MovieHistory> toUpdate);
         string FindDownloadId(MovieFileImportedEvent trackedDownload);
@@ -84,6 +85,12 @@ namespace NzbDrone.Core.History
         public List<MovieHistory> Find(string downloadId, MovieHistoryEventType eventType)
         {
             return _historyRepository.FindByDownloadId(downloadId).Where(c => c.EventType == eventType).ToList();
+        }
+
+        public List<MovieHistory> FindByDownloadId(int clientId, string downloadId)
+        {
+            return FindByDownloadId(downloadId).Where(h =>
+                !int.TryParse(h.Data.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID), out var recorded) || recorded == clientId).ToList();
         }
 
         public List<MovieHistory> FindByDownloadId(string downloadId)

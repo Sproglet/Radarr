@@ -148,7 +148,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
             try
             {
-                var downloadHistory = _downloadHistoryService.GetLatestDownloadHistoryItem(downloadItem.DownloadId);
+                var downloadHistory = _downloadHistoryService.GetLatestDownloadHistoryItem(downloadClient.Id, downloadItem.DownloadId);
 
                 if (downloadHistory != null)
                 {
@@ -156,10 +156,20 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                     trackedDownload.State = state;
                 }
 
-                var historyItems = _historyService.FindByDownloadId(downloadItem.DownloadId).OrderByDescending(h => h.Date).ToList();
+                var historyItems = _historyService.FindByDownloadId(downloadClient.Id, downloadItem.DownloadId).OrderByDescending(h => h.Date).ToList();
                 var grabbedEvent = historyItems.FirstOrDefault(h => h.EventType == MovieHistoryEventType.Grabbed);
-                var downloadGrab = _downloadHistoryService.GetLatestGrab(downloadItem.DownloadId) ??
+                var downloadGrab = _downloadHistoryService.GetLatestGrab(downloadClient.Id, downloadItem.DownloadId) ??
                     (downloadHistory?.EventType == DownloadHistoryEventType.DownloadGrabbed ? downloadHistory : null);
+                if (downloadGrab == null && downloadHistory == null &&
+                    _historyService.FindByDownloadId(downloadItem.DownloadId)?.Any(h => h.MovieEditionId.HasValue) == true)
+                {
+                    trackedDownload.EditionRecoveryError = "Typed grab belongs to another download client; manual review required.";
+                    trackedDownload.State = TrackedDownloadState.ImportBlocked;
+                    trackedDownload.Warn(trackedDownload.EditionRecoveryError);
+                    _cache.Set(CacheKey(downloadClient.Id, downloadItem.DownloadId), trackedDownload);
+                    return trackedDownload;
+                }
+
                 if (downloadGrab?.MovieEditionId != null &&
                     (downloadGrab.DownloadClientId != downloadClient.Id ||
                      (downloadHistory != null && (downloadHistory.DownloadClientId != downloadClient.Id ||

@@ -30,7 +30,7 @@ namespace NzbDrone.Core.Test.Download.FailedDownloadServiceTests
                                                     .With(h => h.Title = "Drone.S01E01.HDTV")
                                                     .Build();
 
-            _grabHistory = Builder<MovieHistory>.CreateListOfSize(2).All().With(h => h.MovieEditionId = null).With(h => h.EditionRuleRevision = null).BuildList();
+            _grabHistory = Builder<MovieHistory>.CreateListOfSize(2).All().With(h => h.EventType = MovieHistoryEventType.Grabbed).With(h => h.MovieEditionId = null).With(h => h.EditionRuleRevision = null).BuildList();
 
             var remoteMovie = new RemoteMovie
             {
@@ -44,7 +44,7 @@ namespace NzbDrone.Core.Test.Download.FailedDownloadServiceTests
                     .Build();
 
             Mocker.GetMock<IHistoryService>()
-                  .Setup(s => s.Find(_trackedDownload.DownloadItem.DownloadId, MovieHistoryEventType.Grabbed))
+                  .Setup(s => s.FindByDownloadId(_trackedDownload.DownloadClient, _trackedDownload.DownloadItem.DownloadId))
                   .Returns(_grabHistory);
         }
 

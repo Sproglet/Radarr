@@ -210,8 +210,9 @@ namespace NzbDrone.Core.Test.MovieTests
                 Date = DateTime.UtcNow.AddSeconds(1), EventType = DownloadHistoryEventType.DownloadIgnored
             });
             var tracked = Track(ColdService(), "synthetic-directors");
-            tracked.EditionRecoveryError.Should().NotBeNull();
-            tracked.State.Should().Be(TrackedDownloadState.ImportBlocked);
+            tracked.EditionRecoveryError.Should().BeNull();
+            tracked.State.Should().Be(TrackedDownloadState.Downloading);
+            tracked.RemoteMovie.EditionContext.Edition.Id.Should().Be(_directors.Id);
         }
 
         private PendingRelease Pending(MovieEdition edition)
@@ -500,6 +501,76 @@ namespace NzbDrone.Core.Test.MovieTests
             return service.TrackDownload(new DownloadClientDefinition { Id = 10, Protocol = DownloadProtocol.Usenet },
                 new DownloadClientItem { DownloadId = id, Title = "opaque", DownloadClientInfo = new DownloadClientItemClientInfo
                 { Id = 10, Name = "Synthetic Other Client", Type = "Synthetic", Protocol = DownloadProtocol.Usenet } });
+        }
+
+        private void GrabOtherClient(string id)
+        {
+            var message = new MovieGrabbedEvent(Remote(_imax)) { DownloadId = id, DownloadClientId = 10, DownloadClient = "Synthetic", DownloadClientName = "Synthetic Other Client" };
+            _history.Handle(message);
+            _downloads.Handle(message);
+        }
+
+        [Test]
+        public void colliding_client_ids_recover_distinct_editions_from_persisted_grabs_in_cold_caches()
+        {
+            Grab(_directors, "synthetic-shared");
+            GrabOtherClient("synthetic-shared");
+            _directors.MatchRules.Add("DifferentSyntheticGroup$");
+            _editions.Update(_directors);
+            foreach (var service in new[] { ColdService(), ColdService() })
+            {
+                var first = Track(service, "synthetic-shared");
+                var other = TrackOtherClient(service, "synthetic-shared");
+                first.EditionRecoveryError.Should().BeNull();
+                other.EditionRecoveryError.Should().BeNull();
+                first.RemoteMovie.EditionContext.Edition.Id.Should().Be(_directors.Id);
+                other.RemoteMovie.EditionContext.Edition.Id.Should().Be(_imax.Id);
+            }
+
+            Action ambiguous = () => _downloads.GetLatestGrab("synthetic-shared");
+            ambiguous.Should().Throw<InvalidOperationException>();
+        }
+
+        [Test]
+        public void completing_one_client_does_not_complete_other_clients_same_id()
+        {
+            Grab(_directors, "synthetic-shared");
+            GrabOtherClient("synthetic-shared");
+            _downloads.Handle(new DownloadCompletedEvent(Track(ColdService(), "synthetic-shared"), _movie.Id));
+            _downloads.DownloadAlreadyImported(9, "synthetic-shared").Should().BeTrue();
+            _downloads.DownloadAlreadyImported(10, "synthetic-shared").Should().BeFalse();
+            Track(ColdService(), "synthetic-shared").State.Should().Be(TrackedDownloadState.Imported);
+            var other = TrackOtherClient(ColdService(), "synthetic-shared");
+            other.State.Should().Be(TrackedDownloadState.Downloading);
+            other.RemoteMovie.EditionContext.Edition.Id.Should().Be(_imax.Id);
+        }
+
+        [Test]
+        public void failure_and_ignore_with_colliding_ids_keep_separate_identity_snapshots()
+        {
+            Grab(_directors, "synthetic-shared");
+            GrabOtherClient("synthetic-shared");
+            var tracked = Track(ColdService(), "synthetic-shared");
+            tracked.DownloadItem.Status = DownloadItemStatus.Failed;
+            var service = Mocker.Resolve<FailedDownloadService>();
+            service.Check(tracked);
+            var failure = CaptureFailure(() => service.ProcessFailed(tracked));
+            failure.Should().NotBeNull();
+            _history.Handle(failure);
+            _downloads.Handle(failure);
+            DownloadIgnoredEvent ignored = null;
+            Mocker.GetMock<IEventAggregator>().Setup(s => s.PublishEvent(It.IsAny<DownloadIgnoredEvent>())).Callback<DownloadIgnoredEvent>(e => ignored = e);
+            Mocker.Resolve<IgnoredDownloadService>().IgnoreDownload(TrackOtherClient(ColdService(), "synthetic-shared")).Should().BeTrue();
+            _history.Handle(ignored);
+            _downloads.Handle(ignored);
+            var first = _downloads.GetLatestDownloadHistoryItem(9, "synthetic-shared");
+            var other = _downloads.GetLatestDownloadHistoryItem(10, "synthetic-shared");
+            first.EventType.Should().Be(DownloadHistoryEventType.DownloadFailed);
+            other.EventType.Should().Be(DownloadHistoryEventType.DownloadIgnored);
+            first.MovieEditionId.Should().Be(_directors.Id);
+            other.MovieEditionId.Should().Be(_imax.Id);
+            first.Data["movieEditionName"].Should().Be("Directors Cut 3D");
+            other.Data["movieEditionName"].Should().Be("Theatrical IMAX");
         }
 
         [Test]

@@ -26,7 +26,9 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Aggregation.Aggregators.Augmenter
                 return null;
             }
 
-            var history = _downloadHistoryService.GetLatestGrab(downloadClientItem.DownloadId);
+            var history = downloadClientItem.DownloadClientInfo?.Id > 0
+                ? _downloadHistoryService.GetLatestGrab(downloadClientItem.DownloadClientInfo.Id, downloadClientItem.DownloadId)
+                : _downloadHistoryService.GetLatestGrab(downloadClientItem.DownloadId);
             if (history == null)
             {
                 return null;

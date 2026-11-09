@@ -350,9 +350,9 @@ namespace NzbDrone.Core.Test.MediaFiles
             var other = Db.All<MovieFile>().Single(f => f.MovieEditionId != target.Id);
             var otherPath = Path.Combine(_movie.Path, other.RelativePath);
             var bytes = File.ReadAllBytes(otherPath);
-            var item = new DownloadClientItem { DownloadId = "synthetic-recovered-download", Title = "Synthetic.Voyage.2026-SyntheticGroup" };
+            var item = new DownloadClientItem { DownloadId = "synthetic-recovered-download", Title = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientInfo = new DownloadClientItemClientInfo { Id = 9 } };
             var context = _contexts.Resolve(_movie, target.Id);
-            Mocker.GetMock<ITrackedDownloadService>().Setup(t => t.Find(item.DownloadId))
+            Mocker.GetMock<ITrackedDownloadService>().Setup(t => t.Find(9, item.DownloadId))
                 .Returns(new TrackedDownload { RemoteMovie = new RemoteMovie { Movie = _movie, EditionContext = context } });
             Mocker.SetConstant<IEnumerable<IImportDecisionEngineSpecification>>(Array.Empty<IImportDecisionEngineSpecification>());
             var decisions = Mocker.Resolve<ImportDecisionMaker>().GetImportDecisions(new List<string> { Source("SyntheticRecoveredUpgrade") }, _movies.Get(_movie.Id), item, null, true);

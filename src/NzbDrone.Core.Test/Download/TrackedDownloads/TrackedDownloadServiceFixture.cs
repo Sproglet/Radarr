@@ -29,7 +29,7 @@ namespace NzbDrone.Core.Test.Download.TrackedDownloads
         private void GivenDownloadHistory()
         {
             Mocker.GetMock<IHistoryService>()
-                .Setup(s => s.FindByDownloadId(It.Is<string>(sr => sr == "35238")))
+                .Setup(s => s.FindByDownloadId(It.IsAny<int>(), It.Is<string>(sr => sr == "35238")))
                 .Returns(new List<MovieHistory>()
                 {
                     new MovieHistory()
@@ -99,7 +99,7 @@ namespace NzbDrone.Core.Test.Download.TrackedDownloads
             };
             episodeHistory.Data.Add("indexer", "MyIndexer (Prowlarr)");
             Mocker.GetMock<IHistoryService>()
-                .Setup(s => s.FindByDownloadId(It.Is<string>(sr => sr == "35238")))
+                .Setup(s => s.FindByDownloadId(It.IsAny<int>(), It.Is<string>(sr => sr == "35238")))
                 .Returns(new List<MovieHistory>()
                 {
                     episodeHistory
@@ -276,11 +276,11 @@ namespace NzbDrone.Core.Test.Download.TrackedDownloads
         public void should_retrack_as_downloading_when_grabbed_again_after_being_imported()
         {
             Mocker.GetMock<IHistoryService>()
-                .Setup(s => s.FindByDownloadId(It.Is<string>(sr => sr == "35238")))
+                .Setup(s => s.FindByDownloadId(It.IsAny<int>(), It.Is<string>(sr => sr == "35238")))
                 .Returns([]);
 
             Mocker.GetMock<IDownloadHistoryService>()
-                .Setup(s => s.GetLatestDownloadHistoryItem(It.Is<string>(sr => sr == "35238")))
+                .Setup(s => s.GetLatestDownloadHistoryItem(It.IsAny<int>(), It.Is<string>(sr => sr == "35238")))
                 .Returns(new DownloadHistory
                 {
                     MovieId = 5,
@@ -325,7 +325,7 @@ namespace NzbDrone.Core.Test.Download.TrackedDownloads
             Subject.Handle(new MovieGrabbedEvent(remoteMovie) { DownloadId = "35238", DownloadClientId = client.Id });
 
             Mocker.GetMock<IDownloadHistoryService>()
-                .Setup(s => s.GetLatestDownloadHistoryItem(It.Is<string>(sr => sr == "35238")))
+                .Setup(s => s.GetLatestDownloadHistoryItem(It.IsAny<int>(), It.Is<string>(sr => sr == "35238")))
                 .Returns(new DownloadHistory
                 {
                     MovieId = 5,
@@ -340,11 +340,11 @@ namespace NzbDrone.Core.Test.Download.TrackedDownloads
         public void should_track_downloads_using_the_movie_id_for_already_imported_downloads()
         {
             Mocker.GetMock<IHistoryService>()
-                .Setup(s => s.FindByDownloadId(It.Is<string>(sr => sr == "35238")))
+                .Setup(s => s.FindByDownloadId(It.IsAny<int>(), It.Is<string>(sr => sr == "35238")))
                 .Returns([]);
 
             Mocker.GetMock<IDownloadHistoryService>()
-                .Setup(s => s.GetLatestDownloadHistoryItem(It.Is<string>(sr => sr == "35238")))
+                .Setup(s => s.GetLatestDownloadHistoryItem(It.IsAny<int>(), It.Is<string>(sr => sr == "35238")))
                 .Returns(new DownloadHistory
                 {
                     MovieId = 5,
