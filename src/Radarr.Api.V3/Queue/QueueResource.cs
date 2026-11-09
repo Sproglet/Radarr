@@ -15,6 +15,10 @@ namespace Radarr.Api.V3.Queue
     public class QueueResource : RestResource
     {
         public int? MovieId { get; set; }
+        public int? MovieEditionId { get; set; }
+        public string MovieEditionName { get; set; }
+        public int? DownloadClientId { get; set; }
+        public int? EditionCustomFormatScore { get; set; }
         public MovieResource Movie { get; set; }
         public List<Language> Languages { get; set; }
         public QualityModel Quality { get; set; }
@@ -58,12 +62,16 @@ namespace Radarr.Api.V3.Queue
             }
 
             var customFormats = model.RemoteMovie?.CustomFormats;
-            var customFormatScore = model.Movie?.QualityProfile?.CalculateCustomFormatScore(customFormats) ?? 0;
+            var customFormatScore = customFormats == null ? 0 : model.RemoteMovie?.EffectiveQualityProfile?.CalculateCustomFormatScore(customFormats) ?? 0;
 
             return new QueueResource
             {
                 Id = model.Id,
                 MovieId = model.Movie?.Id,
+                MovieEditionId = model.RemoteMovie?.EditionContext?.Edition.Id,
+                MovieEditionName = model.RemoteMovie?.EditionContext?.Edition.Name,
+                DownloadClientId = model.DownloadClientId,
+                EditionCustomFormatScore = model.RemoteMovie?.EditionContext == null ? null : customFormatScore,
                 Movie = includeMovie && model.Movie != null ? model.Movie.ToResource(0) : null,
                 Languages = model.Languages,
                 Quality = model.Quality,
