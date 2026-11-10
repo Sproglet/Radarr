@@ -297,7 +297,14 @@ namespace NzbDrone.Core.Movies
         }
 
         public SqlBuilder MoviesWithoutFilesBuilder() => Builder()
-            .Where<Movie>(x => x.MovieFileId == 0)
+            .Where(@"(EXISTS (
+                SELECT 1 FROM ""MovieEditions"" e
+                LEFT JOIN ""MovieFiles"" current_file ON current_file.""Id"" = e.""MovieFileId""
+                    AND current_file.""MovieId"" = e.""MovieId"" AND current_file.""MovieEditionId"" = e.""Id""
+                WHERE e.""MovieId"" = ""Movies"".""Id"" AND (e.""Monitored"" OR NOT ""Movies"".""Monitored"")
+                    AND current_file.""Id"" IS NULL
+            ) OR (NOT EXISTS (SELECT 1 FROM ""MovieEditions"" e WHERE e.""MovieId"" = ""Movies"".""Id"")
+                AND ""Movies"".""MovieFileId"" = 0))")
             .Where<Movie>(m => m.MovieMetadata.Value.Year > 0)
             .GroupBy<Movie>(m => m.Id)
             .GroupBy<MovieMetadata>(m => m.Id);
@@ -311,8 +318,14 @@ namespace NzbDrone.Core.Movies
         }
 
         public SqlBuilder MoviesWhereCutoffUnmetBuilder(List<QualitiesBelowCutoff> qualitiesBelowCutoff) => Builder()
-            .Where<Movie>(x => x.MovieFileId != 0)
-            .Where(BuildQualityCutoffWhereClause(qualitiesBelowCutoff))
+            .Where($@"(EXISTS (
+                SELECT 1 FROM ""MovieEditions"" e
+                JOIN ""MovieFiles"" current_file ON current_file.""Id"" = e.""MovieFileId""
+                    AND current_file.""MovieId"" = e.""MovieId"" AND current_file.""MovieEditionId"" = e.""Id""
+                WHERE e.""MovieId"" = ""Movies"".""Id"" AND (e.""Monitored"" OR NOT ""Movies"".""Monitored"")
+                    AND {BuildQualityCutoffWhereClause(qualitiesBelowCutoff, "e", "current_file")}
+            ) OR (NOT EXISTS (SELECT 1 FROM ""MovieEditions"" e WHERE e.""MovieId"" = ""Movies"".""Id"")
+                AND ""Movies"".""MovieFileId"" != 0 AND {BuildQualityCutoffWhereClause(qualitiesBelowCutoff, _table, "MovieFiles")}))")
             .GroupBy<Movie>(m => m.Id)
             .GroupBy<MovieMetadata>(m => m.Id);
 
@@ -324,19 +337,15 @@ namespace NzbDrone.Core.Movies
             return pagingSpec;
         }
 
-        private string BuildQualityCutoffWhereClause(List<QualitiesBelowCutoff> qualitiesBelowCutoff)
+        private string BuildQualityCutoffWhereClause(List<QualitiesBelowCutoff> qualitiesBelowCutoff, string profileTable, string fileTable)
         {
-            var clauses = new List<string>();
-
-            foreach (var profile in qualitiesBelowCutoff)
-            {
-                foreach (var belowCutoff in profile.QualityIds)
-                {
-                    clauses.Add(string.Format($"(\"{_table}\".\"QualityProfileId\" = {profile.ProfileId} AND \"MovieFiles\".\"Quality\" LIKE '%_quality_: {belowCutoff},%')"));
-                }
-            }
-
-            return string.Format("({0})", string.Join(" OR ", clauses));
+            var quality = _database.DatabaseType == DatabaseType.SQLite
+                ? $"JSON_EXTRACT(\"{fileTable}\".\"Quality\", '$.quality')"
+                : $"CAST(\"{fileTable}\".\"Quality\"::json->>'quality' AS INTEGER)";
+            // Only typed integer profile/quality IDs enter this predicate; names and release text are never SQL.
+            var clauses = qualitiesBelowCutoff.SelectMany(profile => profile.QualityIds.Select(id =>
+                $"(\"{profileTable}\".\"QualityProfileId\" = {profile.ProfileId} AND {quality} = {id})")).ToList();
+            return clauses.Count == 0 ? "1 = 0" : "(" + string.Join(" OR ", clauses) + ")";
         }
 
         public Movie FindByPath(string path)

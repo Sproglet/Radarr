@@ -535,9 +535,70 @@ def verify_statistics():
     print("PASS: secondary video/subtitle survive deletion and restart; master monitoring controls wanted counts without changing edition preferences", flush=True)
 
 
+
+def verify_wanted(secondary_profile):
+    before = p.snapshot()
+    history = p.rows("History")
+    profile = p.api("api/v3/qualityprofile/1")
+    p.api("api/v3/qualityprofile/1", dict(profile, cutoff=1), "PUT")
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "Movies" SET "Monitored"=TRUE WHERE "Id"=1')
+        db.execute('UPDATE "MovieEditions" SET "Monitored"=TRUE WHERE "MovieId"=1')
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=2', (secondary_profile,))
+        file = next(f for f in p.rows("MovieFiles") if f["MovieEditionId"] == 2)
+        quality = json.loads(file["Quality"])
+        quality["quality"] = 1
+        db.execute('UPDATE "MovieFiles" SET "Quality"=? WHERE "Id"=?', (json.dumps(quality, separators=(",", ":")), file["Id"]))
+        for eid in [3, 4]:
+            db.execute('''INSERT INTO "MovieEditions" ("Id","MovieId","EditionKey","Name","Monitored","QualityProfileId","Attributes")
+                VALUES (?,1,?,?,TRUE,1,'{}')''', (eid, "synthetic-wanted-" + str(eid), "Synthetic Missing " + str(eid)))
+    p.start()
+
+    def check(endpoint, count, monitored=True):
+        path = "api/v3/wanted/" + endpoint + "?page=1&pageSize=1&monitored=" + str(monitored).lower()
+        page = p.api(path)
+        assert page["totalRecords"] == count and len(page["records"]) == count, page
+        if count:
+            resource = page["records"][0]
+            assert resource["id"] == 1 and resource["movieFileId"] == before[1][0] and resource["hasFile"], resource
+        second = p.api(path.replace("page=1", "page=2"))
+        assert second["totalRecords"] == count and not second["records"], second
+
+    check("missing", 1)
+    check("cutoff", 1)
+    check("missing", 0, monitored=False)
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=1 WHERE "Id"=2')
+        db.execute('UPDATE "MovieEditions" SET "Monitored"=FALSE WHERE "Id" IN (3,4)')
+    p.start()
+    check("missing", 0)
+    check("cutoff", 0)
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=2', (secondary_profile,))
+        db.execute('UPDATE "MovieEditions" SET "Monitored"=FALSE WHERE "Id"=2')
+    p.start()
+    check("cutoff", 0)
+    movie = p.api("api/v3/movie/1")
+    p.api("api/v3/movie/1", dict(movie, monitored=False), "PUT")
+    check("missing", 0)
+    check("cutoff", 0)
+    check("missing", 1, monitored=False)
+    check("cutoff", 1, monitored=False)
+    p.stop()
+    p.start()
+    check("missing", 1, monitored=False)
+    check("cutoff", 1, monitored=False)
+    assert p.snapshot() == before and p.rows("History") == history
+    print("PASS: legacy wanted pages include one movie for multiple missing secondary editions and use each edition's own profile cutoff", flush=True)
+    print("PASS: monitoring, compact quality JSON, pagination totals and primary projection remain correct through profile changes and restart; media/history are unchanged", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -554,6 +615,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "wanted":
+        verify_wanted(secondary["id"])
+        return
     if scenario == "profiles":
         verify_profile_deletion(secondary["id"])
         return
