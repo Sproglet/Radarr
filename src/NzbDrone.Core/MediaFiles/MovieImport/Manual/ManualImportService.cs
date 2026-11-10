@@ -451,6 +451,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
                 item.CustomFormats = _localMovieFormatCalculator.ParseMovieCustomFormats(decision.LocalMovie);
                 item.CustomFormatScore = decision.LocalMovie.EffectiveQualityProfile?.CalculateCustomFormatScore(item.CustomFormats) ?? 0;
                 item.MovieEditionId = decision.LocalMovie.EditionContext?.Edition.Id;
+                item.MovieEditionName = decision.LocalMovie.EditionContext?.Edition.Name;
             }
 
             return item;
@@ -477,6 +478,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
             try
             {
                 var context = _editionContexts.Resolve(movie, movieFile.MovieEditionId, item.Path);
+                item.MovieEditionName = context?.Edition.Name;
                 item.CustomFormatScore = (context?.QualityProfile ?? movie.QualityProfile)?.CalculateCustomFormatScore(item.CustomFormats) ?? 0;
             }
             catch (InvalidOperationException ex)

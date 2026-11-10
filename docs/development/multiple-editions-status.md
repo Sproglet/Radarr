@@ -1,6 +1,6 @@
 # Multiple editions — lifecycle and acquisition groundwork
 
-Date: 9 November 2026 (latest verification; earlier reports retained)
+Date: 10 November 2026 (latest verification; earlier reports retained)
 
 Branch: `Multiple-Editions`, continued from `855e517b3`. On resuming, the working tree was clean and the Phase 2/3 implementation was already recorded in existing commit `1ed83ece1`. This checkpoint records the November collision, classification, gated search/policy and download-identity groundwork. Acquisition remains disabled. Remote integration is recorded below; older push-status notes describe the earlier checkpoints.
 
@@ -230,6 +230,15 @@ Integrated official `Radarr/Radarr:develop` through `2f64b5cf6c4e183d395dc889b4b
 - Application sources are unchanged from the preceding verified checkpoints: **1,239 passed / 4 existing skips / 0 failed on each backend**, plus frontend production build, targeted lint, application-only type checking and reducer/request checks. Those suites were not repeated for this test-only addition. **Automatic multi-edition acquisition and edition retries remain disabled.** This passes the specific SQLite queue/manual-import browser path, not the full UI/acquisition gate. Edition CRUD/selection/review UI, real client software/restart, PostgreSQL HTTP/browser/restart, crash journaling/interruption/concurrency and earlier integration/analyzer/dependency-check gaps remain incomplete. No production configuration/media/client was used and no push has been performed.
 
 - End-of-round allowance check: **14% of the five-hour window remained**, so feature work stopped at the requested 20% threshold. The disposable SDK runner, tmpfs PostgreSQL container, Node build container and dedicated test network were removed. The temporary synthetic configurations/libraries were confirmed absent, and the disposable parent-source comparison was removed. Ignored build outputs and verification logs are retained. Earlier container-retention notes describe prior checkpoints and are superseded by this cleanup. All checkpoints remain local; no push has been performed.
+
+
+## Read-only edition review API (10 November 2026)
+
+- Added read-only `GET /api/v3/movieedition?movieId=...`. Resources retain combined/extensible attributes, rules/revision, independent profile IDs/names, primary selection, edition/master monitoring and the owned current file's ID/path/quality. States distinguish `present`, `missing` and `invalid`. Broken ownership/profile links produce an explicit rejection reason without repairing or guessing during reads. A positive missing parent returns 404, missing/nonpositive parent IDs return 400 and write methods are not exposed (405).
+- Manual-import library previews and reprocessing return `movieEditionName` from the resolved server context. The ID remains authoritative. No edition management, automatic assignment or acquisition is added by this endpoint; the manual edition selector is the next UI step.
+- Disposable .NET SDK **10.0.403** SQLite and PostgreSQL 16 selections each passed **1,239 tests, 4 existing skips, 0 failures**. Application/API, test project and Linux platform Release builds passed with zero warnings/errors under `EnableAnalyzers=false`, `NuGetAudit=false`, `RuntimeIdentifiers=linux-x64`. Artifacts: `_temp/edition-test-results/edition-read-api-{sqlite,postgres}.trx`, matching logs, `edition-read-api-build.log` and `edition-read-api-test-build.log`.
+- The new `edition-read` SQLite HTTP scenario passed with external networking disabled. It first repeats the generated-media import/scan/rename/housekeeping/independent-upgrade/restart smoke, then checks API scoping, rejection status codes, file ownership/projections, combined/custom labels, independent profiles, master monitoring, a missing target and an invalid profile. Reads and manual previews/reprocessing preserve records and both editions' bytes/IDs. Synthetic invalid/missing definitions are seeded only while this temporary application is stopped; invalid links remain unchanged by reads. Artifacts: `edition-read-api-runtime-results.log` and `edition-read-api-runtime.log`. The unique configuration/library was removed by the harness.
+- **Automatic multi-edition acquisition and edition retries remain disabled.** Edition creation/edit/deletion, selection/review UI, real-client and PostgreSQL HTTP/browser/restart, crash/interruption/concurrency and the earlier integration/analyzer/dependency-check gates remain incomplete. Dedicated test containers are retained for the next authorized round. No production configuration/media/client was used. This is a local checkpoint; no push has been performed.
 
 ---
 

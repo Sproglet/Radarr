@@ -22,6 +22,7 @@ namespace Radarr.Api.V3.ManualImport
         public MovieResource Movie { get; set; }
         public int? MovieFileId { get; set; }
         public int? MovieEditionId { get; set; }
+        public string MovieEditionName { get; set; }
         public string ReleaseGroup { get; set; }
         public QualityModel Quality { get; set; }
         public List<Language> Languages { get; set; }
@@ -57,6 +58,7 @@ namespace Radarr.Api.V3.ManualImport
                 Movie = model.Movie.ToResource(0),
                 MovieFileId = model.MovieFileId,
                 MovieEditionId = model.MovieEditionId,
+                MovieEditionName = model.MovieEditionName,
                 ReleaseGroup = model.ReleaseGroup,
                 Quality = model.Quality,
                 Languages = model.Languages,

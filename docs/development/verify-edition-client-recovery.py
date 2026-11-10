@@ -271,11 +271,84 @@ def verify_browser_manual(clients, before):
     print("PASS: both browser-driven upgrades preserve the other edition/subtitle and settle only their client, across real restarts", flush=True)
 
 
+def verify_edition_reads():
+    before = p.snapshot()
+    editions_before = p.rows("MovieEditions")
+    records = p.api("api/v3/movieedition?movieId=1")
+    assert [r["id"] for r in records] == [1, 2], records
+    for record in records:
+        expected = next(e for e in editions_before if e["Id"] == record["id"])
+        assert record["movieId"] == 1 and record["state"] == "present", record
+        assert record["movieFileId"] == before[record["id"]][0] and record["relativePath"] == before[record["id"]][1], record
+        assert record["attributes"] == json.loads(expected["Attributes"]), record
+        assert record["isPrimary"] == (record["id"] == 1) and not record["effectiveMonitored"], record
+        assert record["qualityProfileId"] == 1 and record["qualityProfileName"], record
+    for path, expected_code, method in [("api/v3/movieedition", 400, "GET"), ("api/v3/movieedition?movieId=0", 400, "GET"),
+            ("api/v3/movieedition?movieId=-1", 400, "GET"), ("api/v3/movieedition?movieId=999999", 404, "GET"),
+            ("api/v3/movieedition?movieId=1", 405, "POST")]:
+        try:
+            original_api(path, method=method)
+        except urllib.error.HTTPError as error:
+            assert error.code == expected_code, (error.code, error.read().decode())
+        else:
+            raise AssertionError("Expected rejection: " + path)
+    manual = p.api("api/v3/manualimport?movieId=1")
+    assert {r["movieEditionId"]: r["movieEditionName"] for r in manual} == {1: "Theatrical IMAX", 2: "Directors Cut 3D"}, manual
+    path = p.source("SyntheticEditionReview", "cyan")
+    for edition in records:
+        item = {"path": str(path), "movieId": 1, "movieEditionId": edition["id"], "releaseGroup": "SyntheticGroup",
+                "quality": {"quality": {"id": 7}}, "languages": [{"id": 1}], "indexerFlags": 0}
+        processed = p.api("api/v3/manualimport", [item])[0]
+        assert processed["movieEditionName"] == edition["name"], processed
+    assert p.rows("MovieEditions") == editions_before and p.snapshot() == before
+    profile = p.api("api/v3/qualityprofile/1")
+    profile.pop("id")
+    profile["name"] = "Synthetic Edition Review Profile"
+    secondary = p.api("api/v3/qualityprofile", profile, "POST")
+    p.stop()
+    with sqlite3.connect(p.CONFIG / "radarr.db") as db:
+        db.execute("UPDATE MovieEditions SET Monitored=1 WHERE Id=1")
+        db.execute("UPDATE MovieEditions SET QualityProfileId=? WHERE Id=2", (secondary["id"],))
+        db.execute("""INSERT INTO MovieEditions (Id,MovieId,EditionKey,Name,Monitored,QualityProfileId,Attributes,MatchRules)
+            VALUES (3,1,'synthetic-collector','Synthetic Collector',1,1,?,?)""",
+            (json.dumps({"cut": "theatrical", "branding": "synthetic-collector", "custom-label": "Synthetic Open Label"}), json.dumps(["SyntheticExclusiveGroup$"])))
+    p.start()
+    records = p.api("api/v3/movieedition?movieId=1")
+    assert records[0]["id"] == 1 and len(records) == 3, records
+    assert next(r for r in records if r["id"] == 2)["qualityProfileName"] == secondary["name"], records
+    missing = next(r for r in records if r["id"] == 3)
+    assert missing["state"] == "missing" and missing.get("movieFileId") is None and not missing["effectiveMonitored"], missing
+    assert missing["attributes"]["custom-label"] == "Synthetic Open Label" and missing["matchRules"] == ["SyntheticExclusiveGroup$"], missing
+    p.stop()
+    with sqlite3.connect(p.CONFIG / "radarr.db") as db:
+        db.execute("UPDATE Movies SET Monitored=1 WHERE Id=1")
+        db.execute("UPDATE MovieEditions SET QualityProfileId=999999 WHERE Id=2")
+    p.start()
+    records = p.api("api/v3/movieedition?movieId=1")
+    assert next(r for r in records if r["id"] == 1)["effectiveMonitored"], records
+    invalid = next(r for r in records if r["id"] == 2)
+    assert invalid["state"] == "invalid" and invalid["rejectionReason"], invalid
+    assert next(r for r in records if r["id"] == 1)["state"] == "present", records
+    assert next(e for e in p.rows("MovieEditions") if e["Id"] == 2)["QualityProfileId"] == 999999
+    p.stop()
+    with sqlite3.connect(p.CONFIG / "radarr.db") as db:
+        db.execute("UPDATE Movies SET Monitored=0 WHERE Id=1")
+        db.execute("UPDATE MovieEditions SET Monitored=0,QualityProfileId=1 WHERE Id IN (1,2)")
+        db.execute("DELETE FROM MovieEditions WHERE Id=3")
+    p.start()
+    assert p.snapshot() == before
+    print("PASS: read-only edition API exposes owned files, combined/custom labels, independent profiles and monitoring; invalid/missing targets stay explicit without mutation", flush=True)
+    print("PASS: API rejects invalid parents and write methods; manual preview/reprocess names match the validated target", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     p.run()
+    if scenario == "edition-read":
+        verify_edition_reads()
+        return
     custom = p.api("api/v3/customformat", {"name": "Synthetic Queue Score", "includeCustomFormatWhenRenaming": False,
         "specifications": [{"name": "Synthetic Match", "implementation": "ReleaseTitleSpecification", "negate": False,
                             "required": True, "fields": [{"name": "value", "value": ".+"}]}]}, "POST")
