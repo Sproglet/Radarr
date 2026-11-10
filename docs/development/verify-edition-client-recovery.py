@@ -393,9 +393,50 @@ def configure_profiles():
     return secondary
 
 
+def verify_profile_deletion(secondary_profile):
+    before = p.snapshot()
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=2', (secondary_profile,))
+        db.execute("""INSERT INTO "MovieEditions" ("Id","MovieId","EditionKey","Name","Monitored","QualityProfileId","Attributes")
+            VALUES (3,1,'synthetic-profile-guard','Synthetic Empty Profile Guard',FALSE,?,'{}')""", (secondary_profile,))
+    p.start()
+
+    def rejects(profile):
+        try:
+            original_api("api/v3/qualityprofile/" + str(profile), method="DELETE")
+        except urllib.error.HTTPError as error:
+            assert error.code == 409 and "is in use" in error.read().decode(), error.code
+        else:
+            raise AssertionError("A referenced quality profile must not be deleted")
+        assert p.api("api/v3/qualityprofile/" + str(profile))["id"] == profile
+        assert p.snapshot() == before
+
+    rejects(secondary_profile)
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=1 WHERE "Id"=2')
+    p.start()
+    rejects(secondary_profile)
+    p.stop()
+    with p.database() as db:
+        db.execute('DELETE FROM "MovieEditions" WHERE "Id"=3')
+    p.start()
+    p.api("api/v3/qualityprofile/" + str(secondary_profile), method="DELETE")
+    try:
+        original_api("api/v3/qualityprofile/" + str(secondary_profile))
+    except urllib.error.HTTPError as error:
+        assert error.code == 404, error.code
+    else:
+        raise AssertionError("The unreferenced profile should have been deleted")
+    rejects(1)
+    assert all(e["QualityProfileId"] == 1 for e in p.rows("MovieEditions"))
+    print("PASS: profile HTTP deletion returns 409 for secondary/empty edition references, succeeds after release, and preserves both editions across restarts", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -406,6 +447,9 @@ def run():
         verify_edition_reads()
         return
     secondary = configure_profiles()
+    if scenario == "profiles":
+        verify_profile_deletion(secondary["id"])
+        return
     if scenario == "manual-select":
         verify_selector_imports(secondary["id"])
         return

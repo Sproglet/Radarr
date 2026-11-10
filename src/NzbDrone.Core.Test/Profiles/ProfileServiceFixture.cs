@@ -50,6 +50,14 @@ namespace NzbDrone.Core.Test.Profiles
         }
 
         [Test]
+        public void should_not_delete_a_profile_used_only_by_an_edition()
+        {
+            Mocker.GetMock<IMovieEditionRepository>().Setup(s => s.UsesQualityProfile(42)).Returns(true);
+            Assert.Throws<QualityProfileInUseException>(() => Subject.Delete(42));
+            Mocker.GetMock<IQualityProfileRepository>().Verify(s => s.Delete(It.IsAny<int>()), Times.Never());
+        }
+
+        [Test]
         public void should_not_be_able_to_delete_profile_if_assigned_to_movie()
         {
             var movieList = Builder<Movie>.CreateListOfSize(3)

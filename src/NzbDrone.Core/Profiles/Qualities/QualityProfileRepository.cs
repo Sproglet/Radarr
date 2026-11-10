@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
+using Dapper;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
@@ -21,6 +23,35 @@ namespace NzbDrone.Core.Profiles.Qualities
             : base(database, eventAggregator)
         {
             _customFormatService = customFormatService;
+        }
+
+        protected override bool RequiresLifecycleTransaction => true;
+        protected override bool RequiresDeletedIds => true;
+
+        protected override void OnDeleted(IDbConnection connection, IDbTransaction transaction, List<int> ids)
+        {
+            if (ids.Count == 0)
+            {
+                return;
+            }
+
+            // List<int> has an embedded-document handler; bind scalar IDs on both database engines.
+            var parameters = new DynamicParameters();
+            var selectedIds = string.Join(", ", ids.Select((id, index) =>
+            {
+                var name = $"ProfileId{index}";
+                parameters.Add(name, id);
+                return "@" + name;
+            }));
+            var used = connection.Query<int>($@"SELECT ""QualityProfileId"" FROM ""MovieEditions"" WHERE ""QualityProfileId"" IN ({selectedIds})
+                UNION SELECT ""QualityProfileId"" FROM ""Movies"" WHERE ""QualityProfileId"" IN ({selectedIds})
+                UNION SELECT ""QualityProfileId"" FROM ""ImportLists"" WHERE ""QualityProfileId"" IN ({selectedIds})
+                UNION SELECT ""QualityProfileId"" FROM ""Collections"" WHERE ""QualityProfileId"" IN ({selectedIds})
+                LIMIT 1", parameters, transaction).FirstOrDefault();
+            if (used != 0)
+            {
+                throw new QualityProfileInUseException(used);
+            }
         }
 
         protected override List<QualityProfile> Query(SqlBuilder builder)

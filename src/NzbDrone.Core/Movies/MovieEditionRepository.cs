@@ -11,6 +11,7 @@ namespace NzbDrone.Core.Movies
     public interface IMovieEditionRepository : IBasicRepository<MovieEdition>
     {
         List<MovieEdition> GetByMovie(int movieId);
+        bool UsesQualityProfile(int profileId);
         void SetPrimaryEdition(int movieId, int editionId);
         void SetCurrentFile(int movieId, int editionId, int fileId, int? expectedFileId);
     }
@@ -86,6 +87,12 @@ namespace NzbDrone.Core.Movies
         public List<MovieEdition> GetByMovie(int movieId)
         {
             return Query(e => e.MovieId == movieId);
+        }
+
+        public bool UsesQualityProfile(int profileId)
+        {
+            using var connection = _database.OpenConnection();
+            return connection.ExecuteScalar<bool>(@"SELECT EXISTS (SELECT 1 FROM ""MovieEditions"" WHERE ""QualityProfileId"" = @ProfileId)", new { ProfileId = profileId });
         }
 
         public void SetPrimaryEdition(int movieId, int editionId)

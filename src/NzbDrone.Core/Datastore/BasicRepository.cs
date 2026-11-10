@@ -290,8 +290,7 @@ namespace NzbDrone.Core.Datastore
             using (var conn = _database.OpenConnection())
             {
                 using var tran = RequiresLifecycleTransaction ? conn.BeginTransaction(IsolationLevel.ReadCommitted) : null;
-                conn.Execute(sql.RawSql, sql.Parameters, tran);
-                OnDeleted(conn, tran);
+                ExecuteDelete(conn, tran, sql.RawSql, sql.Parameters);
                 tran?.Commit();
             }
         }
@@ -336,8 +335,7 @@ namespace NzbDrone.Core.Datastore
             using (var conn = _database.OpenConnection())
             {
                 using var tran = RequiresLifecycleTransaction ? conn.BeginTransaction(IsolationLevel.ReadCommitted) : null;
-                conn.Execute($"DELETE FROM \"{_table}\"", transaction: tran);
-                OnDeleted(conn, tran);
+                ExecuteDelete(conn, tran, $"DELETE FROM \"{_table}\"", null);
                 tran?.Commit();
             }
 
@@ -453,6 +451,21 @@ namespace NzbDrone.Core.Datastore
 
         // Derived repositories can maintain related rows before the write transaction commits.
         protected virtual bool RequiresLifecycleTransaction => false;
+        protected virtual bool RequiresDeletedIds => false;
+
+        private void ExecuteDelete(IDbConnection connection, IDbTransaction transaction, string sql, object parameters)
+        {
+            if (RequiresDeletedIds)
+            {
+                var ids = connection.Query<int>(sql.TrimEnd().TrimEnd(';') + " RETURNING \"Id\"", parameters, transaction).AsList();
+                OnDeleted(connection, transaction, ids);
+            }
+            else
+            {
+                connection.Execute(sql, parameters, transaction);
+                OnDeleted(connection, transaction);
+            }
+        }
 
         protected virtual void OnInserted(IDbConnection connection, IDbTransaction transaction, TModel model)
         {
@@ -464,6 +477,11 @@ namespace NzbDrone.Core.Datastore
 
         protected virtual void OnDeleted(IDbConnection connection, IDbTransaction transaction)
         {
+        }
+
+        protected virtual void OnDeleted(IDbConnection connection, IDbTransaction transaction, List<int> ids)
+        {
+            OnDeleted(connection, transaction);
         }
 
         protected virtual SqlBuilder PagedBuilder() => Builder();

@@ -58,9 +58,16 @@ namespace Radarr.Api.V3.Profiles.Quality
         }
 
         [RestDeleteById]
-        public Ok DeleteProfile(int id)
+        public Results<Ok, Conflict<object>> DeleteProfile(int id)
         {
-            _qualityProfileService.Delete(id);
+            try
+            {
+                _qualityProfileService.Delete(id);
+            }
+            catch (QualityProfileInUseException ex)
+            {
+                return TypedResults.Conflict<object>(new { Message = ex.Message });
+            }
 
             return TypedResults.Ok();
         }
