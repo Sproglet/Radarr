@@ -78,10 +78,7 @@ namespace Radarr.Api.V3.MovieFiles
                 return TypedResults.Ok(new List<MovieFileResource>());
             }
 
-            return TypedResults.Ok(movieFiles.GroupBy(e => e.MovieId)
-                .SelectMany(f => f.ToList()
-                    .ConvertAll(e => e.ToResource(_movieService.GetMovie(f.Key), _upgradableSpecification, _formatCalculator)))
-                .ToList());
+            return TypedResults.Ok(MapFiles(movieFiles));
         }
 
         [RestPutById]
@@ -112,7 +109,9 @@ namespace Radarr.Api.V3.MovieFiles
         [Consumes("application/json")]
         public Ok<List<MovieFileResource>> SetMovieFile([FromBody] MovieFileListResource resource)
         {
+            ValidateSelectedIds(resource.MovieFileIds);
             var movieFiles = _mediaFileService.GetMovies(resource.MovieFileIds);
+            var parents = Parents(movieFiles);
 
             foreach (var movieFile in movieFiles)
             {
@@ -150,9 +149,7 @@ namespace Radarr.Api.V3.MovieFiles
 
             _mediaFileService.Update(movieFiles);
 
-            var movie = _movieService.GetMovie(movieFiles.First().MovieId);
-
-            return TypedResults.Ok(movieFiles.ConvertAll(f => f.ToResource(movie, _upgradableSpecification, _formatCalculator)));
+            return TypedResults.Ok(MapFiles(movieFiles, parents));
         }
 
         [RestDeleteById]
@@ -176,17 +173,17 @@ namespace Radarr.Api.V3.MovieFiles
         [Consumes("application/json")]
         public Results<Ok<object>, BadRequest> DeleteMovieFiles([FromBody] MovieFileListResource resource)
         {
-            if (!resource.MovieFileIds.Any())
+            ValidateSelectedIds(resource.MovieFileIds);
+            var movieFiles = _mediaFileService.GetMovies(resource.MovieFileIds);
+            var parents = Parents(movieFiles);
+            foreach (var file in movieFiles)
             {
-                throw new BadRequestException("movieFileIds must be provided");
+                _mediaFileDeletionService.ValidateMovieFileDeletion(parents[file.MovieId], file);
             }
 
-            var movieFiles = _mediaFileService.GetMovies(resource.MovieFileIds);
-            var movie = _movieService.GetMovie(movieFiles.First().MovieId);
-
-            foreach (var movieFile in movieFiles)
+            foreach (var file in movieFiles)
             {
-                _mediaFileDeletionService.DeleteMovieFile(movie, movieFile);
+                _mediaFileDeletionService.DeleteMovieFile(parents[file.MovieId], file);
             }
 
             return TypedResults.Ok<object>(new { });
@@ -196,7 +193,9 @@ namespace Radarr.Api.V3.MovieFiles
         [Consumes("application/json")]
         public Ok<List<MovieFileResource>> SetPropertiesBulk([FromBody] List<MovieFileResource> resources)
         {
+            ValidateSelectedIds(resources.Select(r => r.Id));
             var movieFiles = _mediaFileService.GetMovies(resources.Select(r => r.Id));
+            var parents = Parents(movieFiles);
 
             foreach (var movieFile in movieFiles)
             {
@@ -236,9 +235,27 @@ namespace Radarr.Api.V3.MovieFiles
 
             _mediaFileService.Update(movieFiles);
 
-            var movie = _movieService.GetMovie(movieFiles.First().MovieId);
+            return TypedResults.Ok(MapFiles(movieFiles, parents));
+        }
 
-            return TypedResults.Ok(movieFiles.ConvertAll(f => f.ToResource(movie, _upgradableSpecification, _formatCalculator)));
+        private static void ValidateSelectedIds(IEnumerable<int> ids)
+        {
+            var selected = ids?.ToList();
+            if (selected == null || selected.Count == 0 || selected.Any(id => id <= 0) || selected.Distinct().Count() != selected.Count)
+            {
+                throw new BadRequestException("Provide distinct positive movie file IDs.");
+            }
+        }
+
+        private Dictionary<int, Movie> Parents(List<MovieFile> files)
+        {
+            return _movieService.GetMovies(files.Select(file => file.MovieId).Distinct()).ToDictionary(movie => movie.Id);
+        }
+
+        private List<MovieFileResource> MapFiles(List<MovieFile> files, Dictionary<int, Movie> parents = null)
+        {
+            parents ??= Parents(files);
+            return files.ConvertAll(file => file.ToResource(parents[file.MovieId], _upgradableSpecification, _formatCalculator));
         }
 
         [NonAction]

@@ -113,8 +113,8 @@ def rows(table):
 
 
 def snapshot():
-    files = rows("MovieFiles")
-    extras = rows("SubtitleFiles")
+    files = [file for file in rows("MovieFiles") if file["MovieId"] == 1]
+    extras = [extra for extra in rows("SubtitleFiles") if extra["MovieId"] == 1]
     assert len(files) == 2, files
     assert len(extras) == 2, extras
     result = {}
@@ -125,7 +125,7 @@ def snapshot():
             hashlib.sha256((MOVIE / file["RelativePath"]).read_bytes()).hexdigest(),
             extra["Id"], extra["RelativePath"], (MOVIE / extra["RelativePath"]).read_text(),
         )
-    editions = rows("MovieEditions")
+    editions = [edition for edition in rows("MovieEditions") if edition["MovieId"] == 1]
     assert {e["Id"]: e["MovieFileId"] for e in editions if e["MovieFileId"] is not None} == {k: v[0] for k, v in result.items()}
     assert json.loads(editions[0]["Attributes"]) == {"cut": "theatrical", "framing": "imax"}
     assert json.loads(editions[1]["Attributes"]) == {"cut": "directors-cut", "stereoscopic": "3d"}

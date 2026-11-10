@@ -733,9 +733,83 @@ def verify_creation_browser(secondary_profile):
     print("PASS: both browser-created combined editions upgrade independently and survive scan/rename/restart, preserving all other videos/subtitles and stable keys/labels", flush=True)
 
 
+
+def verify_bulk_file_parents():
+    before = p.snapshot()
+    primary = next(f for f in p.rows("MovieFiles") if f["MovieEditionId"] == 1)
+    secondary = next(f for f in p.rows("MovieFiles") if f["MovieEditionId"] == 2)
+    subtitle = next(e for e in p.rows("SubtitleFiles") if e["MovieFileId"] == primary["Id"])
+    other = p.LIBRARY / "Synthetic Solar Voyage (2026)"
+    other.mkdir()
+    (other / primary["RelativePath"]).write_bytes((p.MOVIE / primary["RelativePath"]).read_bytes())
+    (other / subtitle["RelativePath"]).write_bytes((p.MOVIE / subtitle["RelativePath"]).read_bytes())
+
+    def insert(db, table, row):
+        assert all(key.isalpha() for key in row)
+        db.execute('INSERT INTO "' + table + '" (' + ','.join('"' + key + '"' for key in row) + ') VALUES (' + ','.join('?' for _ in row) + ')', tuple(row.values()))
+
+    p.stop()
+    with p.database() as db:
+        insert(db, "MovieMetadata", dict(p.rows("MovieMetadata")[0], Id=2, TmdbId=-1000002, Title="Synthetic Solar Voyage", CleanTitle="syntheticsolarvoyage", OriginalTitle="Synthetic Solar Voyage", CleanOriginalTitle="syntheticsolarvoyage"))
+        insert(db, "Movies", dict(p.rows("Movies")[0], Id=2, Path=str(other), PrimaryEditionId=3, MovieFileId=900, MovieMetadataId=2))
+        db.execute('''INSERT INTO "MovieEditions" ("Id","MovieId","EditionKey","Name","Monitored","QualityProfileId","MovieFileId","Attributes")
+            VALUES (3,2,'synthetic-solar','Synthetic Solar Theatrical',FALSE,1,900,'{"cut":"theatrical"}')''')
+        insert(db, "MovieFiles", dict(primary, Id=900, MovieId=2, MovieEditionId=3))
+        insert(db, "SubtitleFiles", dict(subtitle, Id=900, MovieId=2, MovieFileId=900))
+    p.start()
+    ids = [secondary["Id"], 900]
+
+    def check_paths(resources):
+        assert len(resources) == 2
+        for resource in resources:
+            expected = p.MOVIE if resource["movieId"] == 1 else other
+            assert resource["path"] == str(expected / resource["relativePath"]), resource
+
+    check_paths(p.api("api/v3/moviefile/bulk", [{"id": fid, "releaseGroup": "SyntheticBulkGroup"} for fid in ids], "PUT"))
+    check_paths(p.api("api/v3/moviefile/editor", {"movieFileIds": ids, "releaseGroup": "SyntheticLegacyBulkGroup"}, "PUT"))
+    check_paths(p.api("api/v3/moviefile?movieFileIds=" + str(ids[0]) + "&movieFileIds=900"))
+    for bad in [[], [ids[0], ids[0]], [0]]:
+        try:
+            original_api("api/v3/moviefile/bulk", {"movieFileIds": bad}, "DELETE")
+        except urllib.error.HTTPError as error:
+            assert error.code == 400, (error.code, error.read().decode())
+        else:
+            raise AssertionError("Invalid bulk selections must reject")
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieFiles" SET "RelativePath"=? WHERE "Id"=900', (str(Path("..") / p.MOVIE.name / primary["RelativePath"]),))
+    p.start()
+    try:
+        original_api("api/v3/moviefile/bulk", {"movieFileIds": ids}, "DELETE")
+    except urllib.error.HTTPError as error:
+        assert error.code == 409, (error.code, error.read().decode())
+    else:
+        raise AssertionError("Escaping file paths must reject the whole selection before deletion")
+    assert p.snapshot() == before and (other / primary["RelativePath"]).exists()
+    assert len(p.rows("MovieFiles")) == 3 and len(p.rows("SubtitleFiles")) == 3
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieFiles" SET "RelativePath"=? WHERE "Id"=900', (primary["RelativePath"],))
+    p.start()
+    p.api("api/v3/moviefile/bulk", {"movieFileIds": ids}, "DELETE")
+    assert {f["Id"] for f in p.rows("MovieFiles")} == {primary["Id"]}
+    assert {e["Id"] for e in p.rows("SubtitleFiles")} == {subtitle["Id"]}
+    assert (p.MOVIE / primary["RelativePath"]).exists() and not (p.MOVIE / secondary["RelativePath"]).exists()
+    assert not (other / primary["RelativePath"]).exists() and not (other / subtitle["RelativePath"]).exists()
+    p.stop()
+    p.start()
+    p.command("RescanMovie", movieId=1)
+    assert hashlib.sha256((p.MOVIE / primary["RelativePath"]).read_bytes()).hexdigest() == before[1][2]
+    assert (p.MOVIE / subtitle["RelativePath"]).read_text() == before[1][5]
+    assert p.api("api/v3/movie/1")["movieFileId"] == primary["Id"] and p.api("api/v3/movie/1")["hasFile"]
+    assert not p.api("api/v3/movie/2")["hasFile"]
+    print("PASS: cross-movie bulk/legacy edits and list responses use each file's own parent path", flush=True)
+    print("PASS: invalid/escaping bulk selections reject before deletion; valid deletion removes only both selected parents' files/subtitles, preserving the unselected primary through restart", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -744,6 +818,9 @@ def run():
     p.run()
     if scenario == "edition-read":
         verify_edition_reads()
+        return
+    if scenario == "bulk-files":
+        verify_bulk_file_parents()
         return
     if scenario == "statistics":
         verify_statistics()

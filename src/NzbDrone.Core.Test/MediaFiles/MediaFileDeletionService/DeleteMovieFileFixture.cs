@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
 using FizzWare.NBuilder;
 using Moq;
@@ -14,21 +16,28 @@ namespace NzbDrone.Core.Test.MediaFiles.MediaFileDeletionService
     [TestFixture]
     public class DeleteMovieFileFixture : CoreTest<Core.MediaFiles.MediaFileDeletionService>
     {
-        private const string RootFolder = @"C:\Test\Movies";
+        private string RootFolder;
         private Movie _movie;
         private MovieFile _movieFile;
 
         [SetUp]
         public void Setup()
         {
+            RootFolder = Path.Combine(TempFolder, "movies");
             _movie = Builder<Movie>.CreateNew()
                                      .With(s => s.Path = Path.Combine(RootFolder, "Movie Title"))
                                      .Build();
 
             _movieFile = Builder<MovieFile>.CreateNew()
+                                               .With(f => f.MovieId = _movie.Id)
+                                               .With(f => f.MovieEditionId = 2)
                                                .With(f => f.RelativePath = "Some SubFolder")
                                                .With(f => f.Path = Path.Combine(_movie.Path, "Some SubFolder"))
                                                .Build();
+
+            Mocker.GetMock<IMediaFileService>().Setup(s => s.GetMovie(_movieFile.Id)).Returns(() => _movieFile);
+            Mocker.GetMock<IMediaFileService>().Setup(s => s.GetFilesByMovie(_movie.Id)).Returns(() => new List<MovieFile> { _movieFile });
+            Mocker.GetMock<IMovieService>().Setup(s => s.GetMovie(_movie.Id)).Returns(() => _movie);
 
             Mocker.GetMock<IDiskProvider>()
                   .Setup(s => s.GetParentFolder(_movie.Path))
@@ -37,6 +46,61 @@ namespace NzbDrone.Core.Test.MediaFiles.MediaFileDeletionService
             Mocker.GetMock<IDiskProvider>()
                   .Setup(s => s.GetParentFolder(_movieFile.Path))
                   .Returns(_movie.Path);
+        }
+
+        private void RejectsWithoutDeleting(Action action)
+        {
+            Assert.Throws<NzbDroneClientException>(() => action());
+            Mocker.GetMock<IRecycleBinProvider>().Verify(s => s.DeleteFile(It.IsAny<string>(), It.IsAny<string>()), Times.Never());
+            Mocker.GetMock<IMediaFileService>().Verify(s => s.Delete(It.IsAny<MovieFile>(), It.IsAny<DeleteMediaFileReason>()), Times.Never());
+        }
+
+        [Test]
+        public void rejects_a_file_from_another_parent_before_filesystem_or_database_deletion()
+        {
+            _movieFile.MovieId = _movie.Id + 1;
+            RejectsWithoutDeleting(() => Subject.DeleteMovieFile(_movie, _movieFile));
+        }
+
+        [TestCase("../Synthetic Other Movie/file.mkv")]
+        [TestCase("/tmp/Synthetic Other Movie/file.mkv")]
+        [TestCase("")]
+        public void rejects_escaping_or_empty_paths_before_deletion(string path)
+        {
+            _movieFile.RelativePath = path;
+            RejectsWithoutDeleting(() => Subject.DeleteMovieFile(_movie, _movieFile));
+        }
+
+        [TestCase("missing-file")]
+        [TestCase("missing-parent")]
+        [TestCase("edition")]
+        [TestCase("file-parent")]
+        [TestCase("path")]
+        [TestCase("folder")]
+        public void rejects_changed_snapshot_before_deletion(string change)
+        {
+            var current = new MovieFile
+            {
+                Id = _movieFile.Id, MovieId = _movie.Id, RelativePath = _movieFile.RelativePath, MovieEditionId = _movieFile.MovieEditionId
+            };
+            var parent = new Movie { Id = _movie.Id, Path = _movie.Path };
+            if (change == "edition") { current.MovieEditionId++; }
+            if (change == "file-parent") { current.MovieId++; }
+            if (change == "path") { current.RelativePath = "Synthetic Replacement.mkv"; }
+            if (change == "folder") { parent.Path += "-moved"; }
+            Mocker.GetMock<IMediaFileService>().Setup(s => s.GetMovie(_movieFile.Id)).Returns(change == "missing-file" ? null : current);
+            Mocker.GetMock<IMovieService>().Setup(s => s.GetMovie(_movie.Id)).Returns(change == "missing-parent" ? null : parent);
+            RejectsWithoutDeleting(() => Subject.DeleteMovieFile(_movie, _movieFile));
+        }
+
+        [Test]
+        public void rejects_duplicate_physical_path_ownership_before_deletion()
+        {
+            Mocker.GetMock<IMediaFileService>().Setup(s => s.GetFilesByMovie(_movie.Id)).Returns(new List<MovieFile>
+            {
+                _movieFile, new() { Id = _movieFile.Id + 1, MovieId = _movie.Id, MovieEditionId = 3, RelativePath = _movieFile.RelativePath.ToUpperInvariant() }
+            });
+            RejectsWithoutDeleting(() => Subject.DeleteMovieFile(_movie, _movieFile));
         }
 
         private void GivenRootFolderExists()

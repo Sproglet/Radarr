@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using NLog;
 using NzbDrone.Common.Disk;
@@ -16,6 +17,7 @@ namespace NzbDrone.Core.MediaFiles
 {
     public interface IDeleteMediaFiles
     {
+        void ValidateMovieFileDeletion(Movie movie, MovieFile movieFile);
         void DeleteMovieFile(Movie movie, MovieFile movieFile);
     }
 
@@ -48,9 +50,56 @@ namespace NzbDrone.Core.MediaFiles
             _logger = logger;
         }
 
+        public void ValidateMovieFileDeletion(Movie movie, MovieFile movieFile)
+        {
+            if (movie == null || movieFile == null || movie.Id <= 0 || movieFile.Id <= 0 || movieFile.MovieId != movie.Id)
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "The selected file does not belong to this movie.");
+            }
+
+            var current = _mediaFileService.GetMovie(movieFile.Id);
+            var parent = _movieService.GetMovie(movie.Id);
+            if (current == null || parent == null || parent.Id != movie.Id || current.Id != movieFile.Id || current.MovieId != movie.Id ||
+                current.MovieEditionId != movieFile.MovieEditionId || current.RelativePath != movieFile.RelativePath || !parent.Path.PathEquals(movie.Path))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "The movie or file changed. Reload before deleting it.");
+            }
+
+            var fullPath = DeletionPath(movie, movieFile);
+            if (_mediaFileService.GetFilesByMovie(movie.Id).Any(other => other.Id != movieFile.Id && !string.IsNullOrWhiteSpace(other.RelativePath) &&
+                string.Equals(Path.GetFullPath(Path.Combine(movie.Path, other.RelativePath)), fullPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Another file record uses this destination. Resolve its ownership before deleting it.");
+            }
+        }
+
+        private static string DeletionPath(Movie movie, MovieFile movieFile)
+        {
+            if (string.IsNullOrWhiteSpace(movieFile.RelativePath) || Path.IsPathRooted(movieFile.RelativePath))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "The file path must be relative to its movie folder.");
+            }
+
+            var fullPath = Path.GetFullPath(Path.Combine(movie.Path, movieFile.RelativePath));
+            if (!Path.GetFullPath(movie.Path).IsParentPath(fullPath))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "The file path must remain inside its movie folder.");
+            }
+
+            return fullPath;
+        }
+
         public void DeleteMovieFile(Movie movie, MovieFile movieFile)
         {
-            var fullPath = Path.Combine(movie.Path, movieFile.RelativePath);
+            if (movie == null)
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "The movie is unavailable. Reload before deleting its files.");
+            }
+
+            using var lease = MovieFileOperationLock.Acquire(movie.Id);
+            ValidateMovieFileDeletion(movie, movieFile);
+            var fullPath = DeletionPath(movie, movieFile);
+            movieFile.Movie = movie;
             var rootFolder = _diskProvider.GetParentFolder(movie.Path);
 
             if (!_diskProvider.FolderExists(rootFolder))
