@@ -19,6 +19,7 @@ import MovieEdition, {
   EditionNamingPreview,
   EditionProposal,
 } from 'Movie/MovieEdition';
+import postEdition from 'Movie/postEdition';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 
@@ -38,22 +39,6 @@ interface AddEditionModalProps {
   qualityProfileId: number;
   onCreated(edition: MovieEdition): void;
   onModalClose(): void;
-}
-
-async function post<T>(path: string, proposal: EditionProposal): Promise<T> {
-  const response = await fetch(window.Radarr.apiRoot + path, {
-    method: 'POST',
-    headers: {
-      'X-Api-Key': window.Radarr.apiKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(proposal),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => undefined);
-    throw new ApiError(path, response.status, response.statusText, body);
-  }
-  return response.json() as Promise<T>;
 }
 
 function AddEditionContent({
@@ -144,7 +129,10 @@ function AddEditionContent({
     setError(undefined);
     try {
       setPreview(
-        await post<EditionNamingPreview>('/movieedition/preview', proposal)
+        await postEdition<EditionNamingPreview>(
+          '/movieedition/preview',
+          proposal
+        )
       );
       setPreviewProposal(proposal);
     } catch (requestError) {
@@ -170,7 +158,10 @@ function AddEditionContent({
     onCreatingChange(true);
     setError(undefined);
     try {
-      const edition = await post<MovieEdition>('/movieedition', proposal);
+      const edition = await postEdition<MovieEdition>(
+        '/movieedition',
+        proposal
+      );
       onCreated(edition);
     } catch (requestError) {
       setPreview(undefined);

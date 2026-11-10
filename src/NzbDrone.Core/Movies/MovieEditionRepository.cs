@@ -15,6 +15,7 @@ namespace NzbDrone.Core.Movies
         bool UsesQualityProfile(int profileId);
         MovieEdition CreateUnmonitored(MovieEdition edition, Movie expectedMovie, List<MovieEdition> expectedEditions);
         void SetPrimaryEdition(int movieId, int editionId);
+        void SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId);
         void SetCurrentFile(int movieId, int editionId, int fileId, int? expectedFileId);
     }
 
@@ -128,19 +129,49 @@ namespace NzbDrone.Core.Movies
                 throw new InvalidOperationException("An edition with this name already exists for the movie.");
             }
 
-            // Hold a profile key lock until commit. A concurrent deletion either wins first (creation fails)
-            // or observes the newly committed edition in its transactional reference guard and rolls back.
-            var profileLock = _database.DatabaseType == DatabaseType.PostgreSQL ? " FOR KEY SHARE" : "";
-            var profileId = connection.QuerySingleOrDefault<int?>($@"SELECT ""Id"" FROM ""QualityProfiles"" WHERE ""Id"" = @QualityProfileId{profileLock}", new { edition.QualityProfileId }, transaction);
-            if (!profileId.HasValue)
-            {
-                throw new ModelNotFoundException(typeof(QualityProfile), edition.QualityProfileId);
-            }
+            LockProfile(connection, transaction, edition.QualityProfileId);
 
             Insert(connection, transaction, edition);
             transaction.Commit();
             ModelCreated(edition);
             return edition;
+        }
+
+        private void LockProfile(IDbConnection connection, IDbTransaction transaction, int qualityProfileId)
+        {
+            var profileLock = _database.DatabaseType == DatabaseType.PostgreSQL ? " FOR KEY SHARE" : "";
+            var profileId = connection.QuerySingleOrDefault<int?>($@"SELECT ""Id"" FROM ""QualityProfiles"" WHERE ""Id"" = @QualityProfileId{profileLock}", new { QualityProfileId = qualityProfileId }, transaction);
+            if (!profileId.HasValue)
+            {
+                throw new ModelNotFoundException(typeof(QualityProfile), qualityProfileId);
+            }
+        }
+
+        public void SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId)
+        {
+            if (movieId <= 0 || editionId <= 0 || expectedPrimaryId <= 0 || expectedProfileId <= 0 || expectedFileId <= 0)
+            {
+                throw new ArgumentException("Provide positive movie, edition and expected primary/profile IDs; use null for an expected missing file.");
+            }
+
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            var locked = connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", new { MovieId = movieId }, transaction);
+            if (locked != 1)
+            {
+                throw new ModelNotFoundException(typeof(Movie), movieId);
+            }
+
+            var current = connection.QuerySingle<int?>(@"SELECT ""PrimaryEditionId"" FROM ""Movies"" WHERE ""Id"" = @MovieId", new { MovieId = movieId }, transaction);
+            var target = connection.QuerySingleOrDefault<MovieEdition>(@"SELECT * FROM ""MovieEditions"" WHERE ""Id"" = @EditionId AND ""MovieId"" = @MovieId", new { MovieId = movieId, EditionId = editionId }, transaction);
+            if (target == null || current != expectedPrimaryId || target.MovieFileId != expectedFileId || target.QualityProfileId != expectedProfileId)
+            {
+                throw new InvalidOperationException("The primary selection or target file/profile changed. Reload before selecting a primary edition.");
+            }
+
+            LockProfile(connection, transaction, target.QualityProfileId);
+            SetPrimary(connection, transaction, movieId, editionId);
+            transaction.Commit();
         }
 
         private static bool SameTarget(MovieEdition current, MovieEdition expected)
@@ -158,7 +189,14 @@ namespace NzbDrone.Core.Movies
             using var connection = _database.OpenConnection();
             using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
             connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", new { MovieId = movieId }, transaction);
+            SetPrimary(connection, transaction, movieId, editionId);
+            transaction.Commit();
+        }
+
+        private static void SetPrimary(IDbConnection connection, IDbTransaction transaction, int movieId, int editionId)
+        {
             var updated = connection.Execute(@"UPDATE ""Movies"" SET ""PrimaryEditionId"" = @EditionId,
+                ""LastSearchTime"" = (SELECT ""LastSearchTime"" FROM ""MovieEditions"" WHERE ""Id"" = @EditionId),
                 ""MovieFileId"" = COALESCE((SELECT ""MovieFileId"" FROM ""MovieEditions"" WHERE ""Id"" = @EditionId), 0)
                 WHERE ""Id"" = @MovieId AND EXISTS (SELECT 1 FROM ""MovieEditions"" e
                     WHERE e.""Id"" = @EditionId AND e.""MovieId"" = @MovieId AND
@@ -169,8 +207,6 @@ namespace NzbDrone.Core.Movies
             {
                 throw new InvalidOperationException("The primary edition must belong to the movie and have valid file ownership.");
             }
-
-            transaction.Commit();
         }
 
         // Storage primitive only: callers must finish filesystem and import validation first.

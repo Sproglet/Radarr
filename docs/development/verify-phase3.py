@@ -130,7 +130,11 @@ def snapshot():
     assert json.loads(editions[0]["Attributes"]) == {"cut": "theatrical", "framing": "imax"}
     assert json.loads(editions[1]["Attributes"]) == {"cut": "directors-cut", "stereoscopic": "3d"}
     movie = api("api/v3/movie/1")
-    assert movie["movieFile"]["id"] == result[1][0] and movie["hasFile"]
+    primary = next(parent for parent in rows("Movies") if parent["Id"] == 1)["PrimaryEditionId"]
+    if primary in result:
+        assert movie["movieFile"]["id"] == result[primary][0] and movie["hasFile"]
+    else:
+        assert not movie["hasFile"] and movie["movieFileId"] == 0 and not movie.get("movieFile")
     return result
 
 

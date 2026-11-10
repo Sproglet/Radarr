@@ -1,4 +1,8 @@
 {
+  "SelectPrimaryEdition": "Make Primary",
+  "PrimaryEditionConfirm": "Use “{edition}” as the primary edition? Legacy file status will follow this target, including a missing file. Other copies, profiles, labels and monitoring preferences stay in place.",
+  "PrimaryEditionHelpText": "The primary edition supplies the file and search date shown to legacy clients. Changing it does not move files or change the movie default profile or edition preferences.",
+  "PrimaryEditionFailed": "Unable to select the primary edition. Reload the movie and try again.",
   "AddEdition": "Add Edition",
   "Editions": "Editions",
   "PrimaryEdition": "Primary",

@@ -936,9 +936,65 @@ def verify_primary_context(edition_profile):
     print("PASS: invalid primary context cannot borrow the default; primary selection and both files/subtitles survive real process restarts", flush=True)
 
 
+
+def verify_primary_selection(edition_profile):
+    before = p.snapshot()
+    empty = p.api("api/v3/movieedition", {"movieId": 1, "name": "Synthetic Empty Primary", "attributes": {"custom-label": "Synthetic Empty"}})
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=?,"LastSearchTime"=? WHERE "Id"=2', (edition_profile, "2026-11-09T09:00:00Z"))
+        db.execute('UPDATE "MovieEditions" SET "LastSearchTime"=? WHERE "Id"=1', ("2026-11-08T08:00:00Z",))
+        db.execute('UPDATE "Movies" SET "LastSearchTime"=? WHERE "Id"=1', ("2026-11-08T08:00:00Z",))
+        db.execute('''INSERT INTO "MovieEditions" ("Id","MovieId","EditionKey","Name","Monitored","QualityProfileId","Attributes")
+            VALUES (900,1,'synthetic-invalid-primary','Synthetic Invalid Primary',FALSE,999999,'{}')''')
+    p.start()
+    body = {"movieId": 1, "expectedPrimaryEditionId": 1, "expectedMovieFileId": before[2][0], "expectedQualityProfileId": edition_profile}
+    original_rows = p.rows("Movies")
+    editions = p.rows("MovieEditions")
+    history = p.rows("History")
+    invalid = [("2", dict(body, expectedPrimaryEditionId=999999), 409),
+               ("2", dict(body, expectedMovieFileId=None), 409), ("2", dict(body, expectedQualityProfileId=1), 409),
+               ("2", dict(body, movieId=999999), 404), ("999999", body, 404),
+               ("2", dict(body, expectedMovieFileId=0), 400),
+               ("900", dict(body, expectedMovieFileId=None, expectedQualityProfileId=999999), 404)]
+    missing = dict(body)
+    del missing["expectedMovieFileId"]
+    invalid.append(("2", missing, 400))
+    for eid, request, expected in invalid:
+        try:
+            original_api("api/v3/movieedition/" + eid + "/primary", request)
+        except urllib.error.HTTPError as error:
+            assert error.code == expected, (error.code, error.read().decode())
+        else:
+            raise AssertionError("Invalid primary selection must reject")
+        assert p.rows("Movies") == original_rows and p.rows("MovieEditions") == editions and p.rows("History") == history
+    configure_browser_auth()
+    subprocess.run(["node", "/src/docs/development/verify-edition-primary-browser.cjs", str(empty["id"])], check=True)
+    assert p.snapshot() == before
+    # The active primary can be upgraded; changing another edition must not replace the projection.
+    p.api("api/v3/movieedition/2/primary", body)
+    for target, colour in [(1, "white"), (2, "purple")]:
+        previous = p.snapshot()
+        p.manual(target, "SyntheticPrimaryUpgrade" + str(target), colour)
+        current = p.snapshot()
+        assert current[3 - target] == previous[3 - target]
+        assert p.api("api/v3/movie/1")["movieFileId"] == current[2][0]
+        p.command("RescanMovie", movieId=1)
+        p.command("RenameMovie", movieIds=[1])
+        p.stop()
+        p.start()
+        assert p.snapshot() == current
+    p.api("api/v3/movieedition/1/primary", {"movieId": 1, "expectedPrimaryEditionId": 2, "expectedMovieFileId": current[1][0], "expectedQualityProfileId": 1})
+    assert p.api("api/v3/movie/1")["movieFileId"] == current[1][0]
+    assert p.rows("MovieEditions") == [dict(row, MovieFileId=current[row["Id"]][0]) if row["Id"] in current else row for row in editions]
+    assert not p.rows("DownloadHistory")
+    print("PASS: guarded primary API/UI rejects stale/foreign/invalid targets and missing expected state; cancel/conflict recovery and empty targets preserve all files/preferences", flush=True)
+    print("PASS: file/search projections and independent profiles follow primary selection; both edition upgrades preserve other bytes/IDs through scan/rename/restart", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -958,6 +1014,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "primary-selection":
+        verify_primary_selection(secondary["id"])
+        return
     if scenario == "primary-context":
         verify_primary_context(secondary["id"])
         return

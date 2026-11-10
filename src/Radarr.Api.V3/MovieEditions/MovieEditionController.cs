@@ -68,6 +68,37 @@ namespace Radarr.Api.V3.MovieEditions
             }
         }
 
+        [HttpPost("{id:int}/primary")]
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public Results<Ok<MovieEditionResource>, Conflict<object>> SelectPrimary(int id, [FromBody] MovieEditionPrimaryResource request)
+        {
+            if (request == null || request.MovieId <= 0 || id <= 0 || request.ExpectedPrimaryEditionId <= 0 ||
+                request.ExpectedQualityProfileId <= 0 || request.ExpectedMovieFileId <= 0)
+            {
+                throw new BadRequestException("Provide positive IDs and an explicit expected file ID, or null for a missing file.");
+            }
+
+            try
+            {
+                var edition = _management.SelectPrimary(request.MovieId, id, request.ExpectedPrimaryEditionId, request.ExpectedMovieFileId, request.ExpectedQualityProfileId);
+                var movie = _movies.Get(edition.MovieId);
+                return TypedResults.Ok(edition.ToResource(movie, _contexts));
+            }
+            catch (ArgumentException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
+            catch (ModelNotFoundException ex)
+            {
+                throw new NotFoundException(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return TypedResults.Conflict<object>(new { message = ex.Message });
+            }
+        }
+
         private static MovieEdition ToProposal(MovieEditionNamingProposalResource proposal)
         {
             if (proposal == null || proposal.QualityProfileId <= 0)

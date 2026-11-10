@@ -16,6 +16,9 @@ import MovieEdition from 'Movie/MovieEdition';
 import { fetchMovies } from 'Store/Actions/movieActions';
 import translate from 'Utilities/String/translate';
 import AddEditionModal from './AddEditionModal';
+import SelectPrimaryEditionModal, {
+  PrimarySelection,
+} from './SelectPrimaryEditionModal';
 
 const columns = [
   { name: 'name', label: () => translate('Edition'), isVisible: true },
@@ -31,6 +34,7 @@ const columns = [
     isVisible: true,
   },
   { name: 'file', label: () => translate('File'), isVisible: true },
+  { name: 'actions', label: () => translate('Actions'), isVisible: true },
 ];
 
 interface MovieEditionsTableProps {
@@ -38,6 +42,23 @@ interface MovieEditionsTableProps {
   qualityProfileId: number;
   monitored: boolean;
   statistics?: Statistics;
+}
+
+function PrimaryEditionButton({
+  edition,
+  isDisabled,
+  onSelect,
+}: {
+  edition: MovieEdition;
+  isDisabled: boolean;
+  onSelect(edition: MovieEdition): void;
+}) {
+  const onPress = useCallback(() => onSelect(edition), [edition, onSelect]);
+  return (
+    <Button isDisabled={isDisabled} onPress={onPress}>
+      {translate('SelectPrimaryEdition')}
+    </Button>
+  );
 }
 
 function MovieEditionsTable({
@@ -49,6 +70,8 @@ function MovieEditionsTable({
   const dispatch = useDispatch();
   const files = useSelector((state: AppState) => state.movieFiles.items);
   const [isAdding, setIsAdding] = useState(false);
+  const [primarySelection, setPrimarySelection] = useState<PrimarySelection>();
+  const [selectionError, setSelectionError] = useState<string>();
   const { data, error, isPending, refetch } = useApiQuery<MovieEdition[]>({
     path: `/movieedition?movieId=${movieId}`,
     queryOptions: { staleTime: 0, refetchOnMount: 'always' },
@@ -63,9 +86,37 @@ function MovieEditionsTable({
     dispatch(fetchMovies({ id: movieId }));
   }, [refetch, dispatch, movieId]);
 
+  const onPrimaryClose = useCallback(() => setPrimarySelection(undefined), []);
+  const onPrimarySelected = useCallback(() => {
+    setPrimarySelection(undefined);
+    setSelectionError(undefined);
+    onCreated();
+  }, [onCreated]);
+  const onPrimaryError = useCallback(
+    (message: string) => {
+      setPrimarySelection(undefined);
+      setSelectionError(message);
+      onCreated();
+    },
+    [onCreated]
+  );
+  const onPrimaryPress = useCallback(
+    (target: MovieEdition) => {
+      const primary = data?.find((edition) => edition.isPrimary);
+      if (primary) {
+        setSelectionError(undefined);
+        setPrimarySelection({ target, expectedPrimaryEditionId: primary.id });
+      }
+    },
+    [data]
+  );
+
   return (
     <>
       {isPending ? <LoadingIndicator /> : null}
+      {selectionError ? (
+        <Alert kind={kinds.DANGER}>{selectionError}</Alert>
+      ) : null}
       {error ? (
         <Alert kind={kinds.DANGER}>{translate('UnableToLoadEditions')}</Alert>
       ) : null}
@@ -111,6 +162,18 @@ function MovieEditionsTable({
                     edition.relativePath ?? translate('EditionMissing')
                   )}
                 </TableRowCell>
+                <TableRowCell>
+                  {edition.isPrimary ? null : (
+                    <PrimaryEditionButton
+                      edition={edition}
+                      isDisabled={
+                        edition.state === 'invalid' ||
+                        !data.some((target) => target.isPrimary)
+                      }
+                      onSelect={onPrimaryPress}
+                    />
+                  )}
+                </TableRowCell>
               </TableRow>
             ))}
           </TableBody>
@@ -119,10 +182,18 @@ function MovieEditionsTable({
       {data && !data.length ? (
         <Alert>{translate('NoEditionsConfigured')}</Alert>
       ) : null}
+      <p>{translate('PrimaryEditionHelpText')}</p>
       <p>{translate('AddEditionHelpText')}</p>
       <Button isDisabled={!data || !!error} onPress={onAdd}>
         {translate('AddEdition')}
       </Button>
+      <SelectPrimaryEditionModal
+        movieId={movieId}
+        selection={primarySelection}
+        onSelected={onPrimarySelected}
+        onError={onPrimaryError}
+        onClose={onPrimaryClose}
+      />
       <AddEditionModal
         isOpen={isAdding}
         movieId={movieId}

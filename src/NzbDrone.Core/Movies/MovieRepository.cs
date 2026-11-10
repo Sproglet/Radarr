@@ -69,6 +69,13 @@ namespace NzbDrone.Core.Movies
             // Lock the parent before touching edition rows, also used by assignment and primary switching.
             connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @Id", new { movie.Id }, transaction);
             var stored = connection.QuerySingle<Movie>(@"SELECT * FROM ""Movies"" WHERE ""Id"" = @Id", new { movie.Id }, transaction);
+            var stalePrimary = movie.PrimaryEditionId != stored.PrimaryEditionId;
+            if (stalePrimary && properties.Count > 1)
+            {
+                // A background metadata/folder update must not replay the previous primary's search date.
+                movie.LastSearchTime = stored.LastSearchTime;
+            }
+
             movie.PrimaryEditionId = stored.PrimaryEditionId;
             movie.MovieFileId = stored.MovieFileId;
             if (movie.MovieFile?.Id != movie.MovieFileId)
@@ -77,13 +84,15 @@ namespace NzbDrone.Core.Movies
                     WHERE ""Id"" = @MovieFileId AND ""MovieId"" = @Id", movie, transaction);
             }
 
-            if (properties.Contains(nameof(Movie.QualityProfileId)))
+            if (properties.Contains(nameof(Movie.QualityProfileId)) &&
+                (movie.QualityProfileId != stored.QualityProfileId || properties.Count == 1))
             {
                 connection.Execute(@"UPDATE ""MovieEditions"" SET ""QualityProfileId"" = @QualityProfileId
                     WHERE ""Id"" = @PrimaryEditionId AND ""MovieId"" = @Id", movie, transaction);
             }
 
-            if (properties.Contains(nameof(Movie.LastSearchTime)))
+            if (properties.Contains(nameof(Movie.LastSearchTime)) &&
+                (movie.LastSearchTime != stored.LastSearchTime || properties.Count == 1))
             {
                 connection.Execute(@"UPDATE ""MovieEditions"" SET ""LastSearchTime"" = @LastSearchTime
                     WHERE ""Id"" = @PrimaryEditionId AND ""MovieId"" = @Id", movie, transaction);

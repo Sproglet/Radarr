@@ -4,12 +4,15 @@ using System.Linq;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Movies.Events;
 
 namespace NzbDrone.Core.Movies
 {
     public interface IMovieEditionManagementService
     {
         MovieEdition Create(MovieEdition proposal);
+        MovieEdition SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId);
     }
 
     public class MovieEditionManagementService : IMovieEditionManagementService
@@ -19,15 +22,41 @@ namespace NzbDrone.Core.Movies
         private readonly IMovieEditionNamingPreviewService _preview;
         private readonly IEditionFilePathGuard _paths;
         private readonly IDiskProvider _disk;
+        private readonly IEventAggregator _events;
 
         public MovieEditionManagementService(IMovieRepository movies, IMovieEditionRepository editions,
-            IMovieEditionNamingPreviewService preview, IEditionFilePathGuard paths, IDiskProvider disk)
+            IMovieEditionNamingPreviewService preview, IEditionFilePathGuard paths, IDiskProvider disk, IEventAggregator events)
         {
             _movies = movies;
             _editions = editions;
             _preview = preview;
             _paths = paths;
             _disk = disk;
+            _events = events;
+        }
+
+        public MovieEdition SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId)
+        {
+            Movie movie;
+            MovieEdition target;
+            using (MovieEditionAcquisitionGate.Acquire(movieId))
+            using (MovieFileOperationLock.Acquire(movieId))
+            {
+                _ = _movies.Find(movieId) ?? throw new ModelNotFoundException(typeof(Movie), movieId);
+                target = _editions.Find(editionId) ?? throw new ModelNotFoundException(typeof(MovieEdition), editionId);
+                if (target.MovieId != movieId)
+                {
+                    throw new InvalidOperationException("The selected edition does not belong to this movie.");
+                }
+
+                _editions.SelectPrimary(movieId, editionId, expectedPrimaryId, expectedFileId, expectedProfileId);
+                movie = _movies.Get(movieId);
+                target = _editions.Get(editionId);
+            }
+
+            // Publish after releasing locks: synchronous consumers can query or call the API.
+            _events.PublishEvent(new MovieUpdatedEvent(movie));
+            return target;
         }
 
         public MovieEdition Create(MovieEdition proposal)
