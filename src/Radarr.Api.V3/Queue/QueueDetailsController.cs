@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Movies;
 using NzbDrone.Core.Queue;
 using NzbDrone.SignalR;
 using Radarr.Http;
@@ -20,12 +21,14 @@ namespace Radarr.Api.V3.Queue
     {
         private readonly IQueueService _queueService;
         private readonly IPendingReleaseService _pendingReleaseService;
+        private readonly IMovieEditionContextService _editionContexts;
 
-        public QueueDetailsController(IBroadcastSignalRMessage broadcastSignalRMessage, IQueueService queueService, IPendingReleaseService pendingReleaseService)
+        public QueueDetailsController(IBroadcastSignalRMessage broadcastSignalRMessage, IQueueService queueService, IPendingReleaseService pendingReleaseService, IMovieEditionContextService editionContexts)
             : base(broadcastSignalRMessage)
         {
             _queueService = queueService;
             _pendingReleaseService = pendingReleaseService;
+            _editionContexts = editionContexts;
         }
 
         [NonAction]
@@ -49,10 +52,10 @@ namespace Radarr.Api.V3.Queue
 
             if (movieId.HasValue)
             {
-                return TypedResults.Ok(fullQueue.Where(q => q.Movie?.Id == movieId.Value).ToResource(includeMovie));
+                return TypedResults.Ok(fullQueue.Where(q => q.Movie?.Id == movieId.Value).ToResource(includeMovie, _editionContexts));
             }
 
-            return TypedResults.Ok(fullQueue.ToResource(includeMovie));
+            return TypedResults.Ok(fullQueue.ToResource(includeMovie, _editionContexts));
         }
 
         [NonAction]

@@ -5,9 +5,8 @@ import RelativeDateCell from 'Components/Table/Cells/RelativeDateCell';
 import TableRowCell from 'Components/Table/Cells/TableRowCell';
 import Column from 'Components/Table/Column';
 import TableRow from 'Components/Table/TableRow';
-import Tooltip from 'Components/Tooltip/Tooltip';
 import usePrevious from 'Helpers/Hooks/usePrevious';
-import { icons, tooltipPositions } from 'Helpers/Props';
+import { icons } from 'Helpers/Props';
 import Language from 'Language/Language';
 import MovieFormats from 'Movie/MovieFormats';
 import MovieLanguages from 'Movie/MovieLanguages';
@@ -18,9 +17,9 @@ import { QualityModel } from 'Quality/Quality';
 import { fetchHistory, markAsFailed } from 'Store/Actions/historyActions';
 import CustomFormat from 'typings/CustomFormat';
 import { HistoryData, HistoryEventType } from 'typings/History';
-import formatCustomFormatScore from 'Utilities/Number/formatCustomFormatScore';
 import HistoryDetailsModal from './Details/HistoryDetailsModal';
 import HistoryEventTypeCell from './HistoryEventTypeCell';
+import HistoryFormatScore from './HistoryFormatScore';
 import styles from './HistoryRow.css';
 
 interface HistoryRowProps {
@@ -29,8 +28,9 @@ interface HistoryRowProps {
   languages: Language[];
   quality: QualityModel;
   customFormats?: CustomFormat[];
-  customFormatScore: number;
-  qualityCutoffNotMet: boolean;
+  customFormatScore?: number;
+  editionContextError?: string;
+  qualityCutoffNotMet?: boolean;
   eventType: HistoryEventType;
   sourceTitle: string;
   date: string;
@@ -49,6 +49,7 @@ function HistoryRow(props: HistoryRowProps) {
     quality,
     customFormats = [],
     customFormatScore,
+    editionContextError,
     qualityCutoffNotMet,
     eventType,
     sourceTitle,
@@ -177,13 +178,10 @@ function HistoryRow(props: HistoryRowProps) {
         if (name === 'customFormatScore') {
           return (
             <TableRowCell key={name} className={styles.customFormatScore}>
-              <Tooltip
-                anchor={formatCustomFormatScore(
-                  customFormatScore,
-                  customFormats.length
-                )}
-                tooltip={<MovieFormats formats={customFormats} />}
-                position={tooltipPositions.BOTTOM}
+              <HistoryFormatScore
+                score={customFormatScore}
+                formats={customFormats}
+                error={editionContextError}
               />
             </TableRowCell>
           );

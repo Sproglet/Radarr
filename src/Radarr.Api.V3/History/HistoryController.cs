@@ -25,18 +25,21 @@ namespace Radarr.Api.V3.History
         private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly IUpgradableSpecification _upgradableSpecification;
         private readonly IFailedDownloadService _failedDownloadService;
+        private readonly IMovieEditionContextService _editionContexts;
 
         public HistoryController(IHistoryService historyService,
                              IMovieService movieService,
                              ICustomFormatCalculationService formatCalculator,
                              IUpgradableSpecification upgradableSpecification,
-                             IFailedDownloadService failedDownloadService)
+                             IFailedDownloadService failedDownloadService,
+                             IMovieEditionContextService editionContexts)
         {
             _historyService = historyService;
             _movieService = movieService;
             _formatCalculator = formatCalculator;
             _upgradableSpecification = upgradableSpecification;
             _failedDownloadService = failedDownloadService;
+            _editionContexts = editionContexts;
         }
 
         protected HistoryResource MapToResource(MovieHistory model, bool includeMovie)
@@ -46,16 +49,11 @@ namespace Radarr.Api.V3.History
                 model.Movie = _movieService.GetMovie(model.MovieId);
             }
 
-            var resource = model.ToResource(_formatCalculator);
+            var resource = model.ToResource(_formatCalculator, _editionContexts, _upgradableSpecification);
 
             if (includeMovie)
             {
-                resource.Movie = model.Movie.ToResource(0);
-            }
-
-            if (model.Movie != null)
-            {
-                resource.QualityCutoffNotMet = _upgradableSpecification.QualityCutoffNotMet(model.Movie.QualityProfile, model.Quality);
+                resource.Movie = model.Movie.ToResource(0, editionContexts: _editionContexts);
             }
 
             return resource;

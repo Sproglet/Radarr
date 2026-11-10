@@ -992,9 +992,111 @@ def verify_primary_selection(edition_profile):
     print("PASS: file/search projections and independent profiles follow primary selection; both edition upgrades preserve other bytes/IDs through scan/rename/restart", flush=True)
 
 
+def verify_activity_contexts(edition_profile):
+    before = p.snapshot()
+    profile = p.api("api/v3/qualityprofile/1")
+    profile["cutoff"] = 1
+    p.api("api/v3/qualityprofile/1", profile, "PUT")
+    p.stop()
+    clients = [SyntheticSab(1), SyntheticSab(2)]
+    SERVERS.extend(clients)
+    seed(clients, edition_profile)
+    movie = p.rows("Movies")[0]
+    metadata = p.rows("MovieMetadata")[0]
+    other = p.LIBRARY / "Synthetic Solar Voyage (2026)"
+    other.mkdir()
+
+    def insert(db, table, row):
+        assert all(key.isalpha() for key in row)
+        db.execute('INSERT INTO "' + table + '" (' + ','.join('"' + key + '"' for key in row) + ') VALUES (' + ','.join('?' for _ in row) + ')', tuple(row.values()))
+
+    quality = json.dumps({"quality": 1, "revision": {"version": 1, "real": 0, "isRepack": False}})
+    with p.database() as db:
+        insert(db, "MovieMetadata", dict(metadata, Id=2, TmdbId=-1000002, Title="Synthetic Solar Voyage", CleanTitle="syntheticsolarvoyage", OriginalTitle="Synthetic Solar Voyage", CleanOriginalTitle="syntheticsolarvoyage"))
+        insert(db, "Movies", dict(movie, Id=2, Path=str(other), PrimaryEditionId=900, MovieFileId=0, MovieMetadataId=2))
+        db.execute('''INSERT INTO "MovieEditions" ("Id","MovieId","EditionKey","Name","Monitored","QualityProfileId","Attributes")
+            VALUES (900,2,'synthetic-solar','Synthetic Solar Theatrical',FALSE,1,'{"cut":"theatrical"}')''')
+        db.execute('UPDATE "History" SET "Quality"=?,"Date"=? WHERE "DownloadId"=?', (quality, "2026-11-11T12:00:00Z", SHARED))
+        db.execute('UPDATE "MovieEditions" SET "Name"=?,"MatchRules"=?,"RuleRevision"="RuleRevision"+1 WHERE "Id"=2',
+                   ("Synthetic Renamed Director 3D", '["SyntheticNeverMatch$"]'))
+        for hid, eid, label in [(900, None, "Unassigned"), (901, 999999, "Deleted"), (902, 900, "Foreign")]:
+            db.execute('''INSERT INTO "History" ("Id","MovieId","MovieEditionId","EditionRuleRevision","SourceTitle","Quality","Date","EventType","Data","Languages")
+                VALUES (?,1,?,1,?,?,'2026-11-11T13:00:00Z',9,?,'[1]')''',
+                (hid, eid, "SyntheticHistoryUnknown" + label, quality, json.dumps({"movieEditionName": "Synthetic Recorded " + label})))
+    p.start()
+    p.api("api/v3/movieedition/2/primary", {"movieId": 1, "expectedPrimaryEditionId": 1,
+        "expectedMovieFileId": before[2][0], "expectedQualityProfileId": edition_profile})
+    history = p.rows("History")
+    downloads = p.rows("DownloadHistory")
+
+    def check(primary, invalid_secondary=False):
+        for path in ["queue?page=1&pageSize=100&includeMovie=true&includeUnknownMovieItems=true", "queue/details?movieId=1&includeMovie=true"] if not invalid_secondary else []:
+            p.command("RefreshMonitoredDownloads")
+            resource = p.api("api/v3/" + path)
+            rows = resource["records"] if isinstance(resource, dict) else resource
+            rows = [row for row in rows if row.get("downloadId") == SHARED]
+            assert len(rows) == 2, rows
+            for row in rows:
+                assert row["movieEditionId"] == row["downloadClientId"] - 40
+                assert row["editionCustomFormatScore"] == row["customFormatScore"] == {1: 11, 2: 77}[row["movieEditionId"]]
+                embedded = row["movie"]
+                assert embedded["qualityProfileId"] == 1
+                assert embedded["movieFileId"] == before[primary][0]
+                assert embedded["movieFile"]["movieEditionId"] == primary
+                assert embedded["movieFile"]["qualityProfileId"] == {1: 1, 2: edition_profile}[primary]
+        for include in [False, True]:
+            suffix = "&includeMovie=" + str(include).lower()
+            for path in ["history?page=1&pageSize=100&movieIds=1", "history/movie?movieId=1", "history/since?date=2026-01-01T00:00:00Z"]:
+                resource = p.api("api/v3/" + path + suffix)
+                rows = resource["records"] if isinstance(resource, dict) else resource
+                grabbed = [row for row in rows if row.get("downloadId") == SHARED]
+                assert len(grabbed) == 2
+                for row in grabbed:
+                    eid = row["movieEditionId"]
+                    assert row["movieEditionName"] == {1: "Theatrical IMAX", 2: "Directors Cut 3D"}[eid]
+                    assert row["editionRuleRevision"] == 1
+                    valid = not (eid == 2 and invalid_secondary)
+                    assert row["editionContextValid"] == valid
+                    assert row.get("customFormatScore") == ({1: 11, 2: 77}[eid] if valid else None)
+                    assert row.get("qualityCutoffNotMet") == (eid == 2 if valid else None)
+                    assert row.get("qualityProfileId") == ({1: 1, 2: edition_profile}[eid] if valid else None)
+                unknown = [row for row in rows if row["id"] in (900, 901, 902)]
+                assert len(unknown) == 3
+                for row in unknown:
+                    assert not row["editionContextValid"] and row["editionContextError"]
+                    assert row.get("customFormatScore") is None and row.get("qualityCutoffNotMet") is None
+                    assert row.get("qualityProfileId") is None and row["customFormats"] == []
+                    assert row["movieEditionName"].startswith("Synthetic Recorded ")
+                for row in grabbed + unknown:
+                    assert ("movie" in row) == include
+                    if include:
+                        assert row["movie"]["movieFileId"] == before[primary][0]
+                        assert row["movie"]["movieFile"]["qualityProfileId"] == {1: 1, 2: edition_profile}[primary]
+        assert p.rows("History") == history and p.rows("DownloadHistory") == downloads
+        assert p.snapshot() == before
+
+    configure_browser_auth()
+    check(2)
+    subprocess.run(["node", "/src/docs/development/verify-edition-history-browser.cjs", "valid"], check=True)
+    p.api("api/v3/movieedition/1/primary", {"movieId": 1, "expectedPrimaryEditionId": 2,
+        "expectedMovieFileId": before[1][0], "expectedQualityProfileId": 1})
+    p.stop()
+    p.start()
+    check(1)
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=999999 WHERE "Id"=2')
+    p.start()
+    check(1, True)
+    subprocess.run(["node", "/src/docs/development/verify-edition-history-browser.cjs", "invalid"], check=True)
+    assert all(not client.deleted and not client.rejected for client in clients)
+    print("PASS: queue embeds follow the current primary while each client keeps its own edition score across primary changes and restart", flush=True)
+    print("PASS: history routes preserve recorded identities/names/revisions, score independent profiles and show unknown for unassigned/deleted/foreign/missing-profile contexts without writes", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -1014,6 +1116,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "activity-contexts":
+        verify_activity_contexts(secondary["id"])
+        return
     if scenario == "primary-selection":
         verify_primary_selection(secondary["id"])
         return

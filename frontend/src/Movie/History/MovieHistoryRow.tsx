@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import HistoryDetailsModal from 'Activity/History/Details/HistoryDetailsModal';
 import HistoryEventTypeCell from 'Activity/History/HistoryEventTypeCell';
+import HistoryFormatScore from 'Activity/History/HistoryFormatScore';
 import IconButton from 'Components/Link/IconButton';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
 import RelativeDateCell from 'Components/Table/Cells/RelativeDateCell';
@@ -14,7 +15,6 @@ import MovieQuality from 'Movie/MovieQuality';
 import { QualityModel } from 'Quality/Quality';
 import CustomFormat from 'typings/CustomFormat';
 import { HistoryData, HistoryEventType } from 'typings/History';
-import formatCustomFormatScore from 'Utilities/Number/formatCustomFormatScore';
 import translate from 'Utilities/String/translate';
 import styles from './MovieHistoryRow.css';
 
@@ -24,9 +24,10 @@ interface MovieHistoryRowProps {
   sourceTitle: string;
   languages?: Language[];
   quality: QualityModel;
-  qualityCutoffNotMet: boolean;
+  qualityCutoffNotMet?: boolean;
   customFormats?: CustomFormat[];
-  customFormatScore: number;
+  customFormatScore?: number;
+  editionContextError?: string;
   date: string;
   data: HistoryData;
   downloadId?: string;
@@ -42,6 +43,7 @@ function MovieHistoryRow({
   qualityCutoffNotMet,
   customFormats = [],
   customFormatScore,
+  editionContextError,
   date,
   data,
   downloadId,
@@ -90,7 +92,11 @@ function MovieHistoryRow({
       </TableRowCell>
 
       <TableRowCell className={styles.customFormatScore}>
-        {formatCustomFormatScore(customFormatScore, customFormats.length)}
+        <HistoryFormatScore
+          score={customFormatScore}
+          formats={customFormats}
+          error={editionContextError}
+        />
       </TableRowCell>
 
       <RelativeDateCell date={date} includeSeconds={true} includeTime={true} />

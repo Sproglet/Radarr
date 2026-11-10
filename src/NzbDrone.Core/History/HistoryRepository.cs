@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Profiles.Qualities;
@@ -140,10 +141,12 @@ namespace NzbDrone.Core.History
         }
 
         protected override IEnumerable<MovieHistory> PagedQuery(SqlBuilder builder) =>
-            _database.QueryJoined<MovieHistory, Movie, QualityProfile>(builder, (hist, movie, profile) =>
+            _database.QueryJoined<MovieHistory, Movie, QualityProfile, MovieFile>(
+                builder.LeftJoin<Movie, MovieFile>((m, f) => m.MovieFileId == f.Id && m.Id == f.MovieId), (hist, movie, profile, file) =>
             {
                 hist.Movie = movie;
                 hist.Movie.QualityProfile = profile;
+                hist.Movie.MovieFile = file;
                 return hist;
             });
 

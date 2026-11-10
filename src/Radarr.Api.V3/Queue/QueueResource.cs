@@ -4,6 +4,7 @@ using System.Linq;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Languages;
+using NzbDrone.Core.Movies;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Queue;
 using Radarr.Api.V3.CustomFormats;
@@ -54,7 +55,7 @@ namespace Radarr.Api.V3.Queue
 
     public static class QueueResourceMapper
     {
-        public static QueueResource ToResource(this NzbDrone.Core.Queue.Queue model, bool includeMovie)
+        public static QueueResource ToResource(this NzbDrone.Core.Queue.Queue model, bool includeMovie, IMovieEditionContextService editionContexts = null)
         {
             if (model == null)
             {
@@ -72,7 +73,7 @@ namespace Radarr.Api.V3.Queue
                 MovieEditionName = model.RemoteMovie?.EditionContext?.Edition.Name,
                 DownloadClientId = model.DownloadClientId,
                 EditionCustomFormatScore = model.RemoteMovie?.EditionContext == null ? null : customFormatScore,
-                Movie = includeMovie && model.Movie != null ? model.Movie.ToResource(0) : null,
+                Movie = includeMovie && model.Movie != null ? model.Movie.ToResource(0, editionContexts: editionContexts) : null,
                 Languages = model.Languages,
                 Quality = model.Quality,
                 CustomFormats = customFormats?.ToResource(false),
@@ -105,9 +106,9 @@ namespace Radarr.Api.V3.Queue
             };
         }
 
-        public static List<QueueResource> ToResource(this IEnumerable<NzbDrone.Core.Queue.Queue> models, bool includeMovie)
+        public static List<QueueResource> ToResource(this IEnumerable<NzbDrone.Core.Queue.Queue> models, bool includeMovie, IMovieEditionContextService editionContexts = null)
         {
-            return models.Select((m) => ToResource(m, includeMovie)).ToList();
+            return models.Select((m) => ToResource(m, includeMovie, editionContexts)).ToList();
         }
     }
 }

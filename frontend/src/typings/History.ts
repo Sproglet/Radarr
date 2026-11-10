@@ -74,12 +74,18 @@ export type HistoryData =
 
 export default interface History {
   movieId: number;
+  movieEditionId?: number;
+  editionRuleRevision?: number;
+  movieEditionName?: string;
+  qualityProfileId?: number;
+  editionContextValid: boolean;
+  editionContextError?: string;
   sourceTitle: string;
   languages: Language[];
   quality: QualityModel;
   customFormats: CustomFormat[];
-  customFormatScore: number;
-  qualityCutoffNotMet: boolean;
+  customFormatScore?: number;
+  qualityCutoffNotMet?: boolean;
   date: string;
   downloadId: string;
   eventType: HistoryEventType;

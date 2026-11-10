@@ -14,6 +14,7 @@ using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Languages;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Movies;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Queue;
@@ -38,6 +39,7 @@ namespace Radarr.Api.V3.Queue
         private readonly IIgnoredDownloadService _ignoredDownloadService;
         private readonly IProvideDownloadClient _downloadClientProvider;
         private readonly IBlocklistService _blocklistService;
+        private readonly IMovieEditionContextService _editionContexts;
 
         public QueueController(IBroadcastSignalRMessage broadcastSignalRMessage,
                            IQueueService queueService,
@@ -47,7 +49,8 @@ namespace Radarr.Api.V3.Queue
                            IFailedDownloadService failedDownloadService,
                            IIgnoredDownloadService ignoredDownloadService,
                            IProvideDownloadClient downloadClientProvider,
-                           IBlocklistService blocklistService)
+                           IBlocklistService blocklistService,
+                           IMovieEditionContextService editionContexts)
             : base(broadcastSignalRMessage)
         {
             _queueService = queueService;
@@ -57,6 +60,7 @@ namespace Radarr.Api.V3.Queue
             _ignoredDownloadService = ignoredDownloadService;
             _downloadClientProvider = downloadClientProvider;
             _blocklistService = blocklistService;
+            _editionContexts = editionContexts;
 
             _qualityComparer = new QualityModelComparer(qualityProfileService.GetDefaultProfile(string.Empty));
         }
@@ -387,7 +391,7 @@ namespace Radarr.Api.V3.Queue
 
         private QueueResource MapToResource(NzbDrone.Core.Queue.Queue queueItem, bool includeMovie)
         {
-            return queueItem.ToResource(includeMovie);
+            return queueItem.ToResource(includeMovie, _editionContexts);
         }
 
         [NonAction]
