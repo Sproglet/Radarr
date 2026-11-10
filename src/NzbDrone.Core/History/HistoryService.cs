@@ -9,6 +9,7 @@ using NzbDrone.Core.Download;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Movies;
 using NzbDrone.Core.Movies.Events;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
@@ -44,11 +45,13 @@ namespace NzbDrone.Core.History
                                   IHandle<DownloadIgnoredEvent>
     {
         private readonly IHistoryRepository _historyRepository;
+        private readonly IMovieEditionRepository _editions;
         private readonly Logger _logger;
 
-        public HistoryService(IHistoryRepository historyRepository, Logger logger)
+        public HistoryService(IHistoryRepository historyRepository, IMovieEditionRepository editions, Logger logger)
         {
             _historyRepository = historyRepository;
+            _editions = editions;
             _logger = logger;
         }
 
@@ -267,6 +270,8 @@ namespace NzbDrone.Core.History
                 MovieId = message.MovieFile.MovieId
             };
 
+            RecordFileEdition(history, message.MovieFile);
+
             history.Data.Add("Reason", message.Reason.ToString());
             history.Data.Add("ReleaseGroup", message.MovieFile.ReleaseGroup);
             history.Data.Add("Size", message.MovieFile.Size.ToString());
@@ -292,6 +297,8 @@ namespace NzbDrone.Core.History
                 MovieId = message.MovieFile.MovieId,
             };
 
+            RecordFileEdition(history, message.MovieFile);
+
             history.Data.Add("SourcePath", sourcePath);
             history.Data.Add("SourceRelativePath", sourceRelativePath);
             history.Data.Add("Path", path);
@@ -301,6 +308,25 @@ namespace NzbDrone.Core.History
             history.Data.Add("IndexerFlags", message.MovieFile.IndexerFlags.ToString());
 
             _historyRepository.Insert(history);
+        }
+
+        private void RecordFileEdition(MovieHistory history, MovieFile file)
+        {
+            // A retained/unassigned file must never inherit the current primary's identity.
+            history.MovieEditionId = file.MovieEditionId;
+            if (!file.MovieEditionId.HasValue)
+            {
+                return;
+            }
+
+            // Deletion has already cleared the current-file pointer. Read only the target's
+            // metadata; requiring an import context here would lose valid deletion history.
+            var edition = _editions.Find(file.MovieEditionId.Value);
+            if (edition?.MovieId == file.MovieId)
+            {
+                history.EditionRuleRevision = edition.RuleRevision;
+                history.Data["movieEditionName"] = edition.Name;
+            }
         }
 
         public void Handle(DownloadIgnoredEvent message)

@@ -7,6 +7,7 @@ using NUnit.Framework;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.History;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.Languages;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Movies;
@@ -110,6 +111,58 @@ namespace NzbDrone.Core.Test.HistoryTests
 
             Mocker.GetMock<IHistoryRepository>()
                 .Verify(v => v.Insert(It.Is<MovieHistory>(h => h.SourceTitle == Path.GetFileNameWithoutExtension(localMovie.Path))));
+        }
+
+        [TestCase(true, "assigned")]
+        [TestCase(false, "assigned")]
+        [TestCase(true, "unassigned")]
+        [TestCase(false, "unassigned")]
+        [TestCase(true, "missing")]
+        [TestCase(false, "missing")]
+        [TestCase(true, "foreign")]
+        [TestCase(false, "foreign")]
+        [TestCase(true, "stale-context")]
+        [TestCase(false, "stale-context")]
+        public void file_events_record_the_file_assignment_and_only_matching_target_metadata(bool deleted, string state)
+        {
+            var movie = new Movie { Id = 42, Path = Path.Combine(Path.GetTempPath(), "SyntheticHistory"), PrimaryEditionId = 1 };
+            var file = new MovieFile
+            {
+                Id = 22, MovieId = movie.Id, Movie = movie, MovieEditionId = state == "unassigned" ? null : 2,
+                RelativePath = "Synthetic.Lunar.Voyage.2026.Directors.Cut.3D-SyntheticGroup.mkv",
+                Quality = new QualityModel(Quality.Bluray1080p), Languages = new() { Language.English }, ReleaseGroup = "SyntheticGroup"
+            };
+            file.Path = Path.Combine(movie.Path, file.RelativePath);
+            var edition = new MovieEdition { Id = 2, MovieId = state == "foreign" ? 99 : movie.Id, Name = "Synthetic Directors Cut 3D", RuleRevision = 9 };
+            Mocker.GetMock<IMovieEditionRepository>().Setup(r => r.Find(2)).Returns(state == "missing" ? null : edition);
+            if (state == "stale-context")
+            {
+                file.EditionContext = new MovieEditionContext(new MovieEdition { Id = 1, MovieId = movie.Id, Name = "Synthetic Wrong Primary", RuleRevision = 3 }, null, null);
+            }
+
+            MovieHistory recorded = null;
+            Mocker.GetMock<IHistoryRepository>().Setup(r => r.Insert(It.IsAny<MovieHistory>()))
+                .Callback<MovieHistory>(h => recorded = h).Returns<MovieHistory>(h => h);
+            if (deleted)
+            {
+                Subject.Handle(new MovieFileDeletedEvent(file, DeleteMediaFileReason.Manual));
+            }
+            else
+            {
+                Subject.Handle(new MovieFileRenamedEvent(movie, file, Path.Combine(movie.Path, "SyntheticOriginal-SyntheticGroup.mkv")));
+            }
+
+            recorded.Should().NotBeNull();
+            recorded.MovieId.Should().Be(movie.Id);
+            recorded.MovieEditionId.Should().Be(file.MovieEditionId);
+            var hasMetadata = state == "assigned" || state == "stale-context";
+            recorded.EditionRuleRevision.Should().Be(hasMetadata ? 9 : null);
+            recorded.Data.GetValueOrDefault("movieEditionName").Should().Be(hasMetadata ? edition.Name : null);
+            recorded.EventType.Should().Be(deleted ? MovieHistoryEventType.MovieFileDeleted : MovieHistoryEventType.MovieFileRenamed);
+            if (state == "unassigned")
+            {
+                Mocker.GetMock<IMovieEditionRepository>().Verify(r => r.Find(It.IsAny<int>()), Times.Never());
+            }
         }
     }
 }

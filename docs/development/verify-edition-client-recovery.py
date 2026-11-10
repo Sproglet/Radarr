@@ -1094,9 +1094,63 @@ def verify_activity_contexts(edition_profile):
     print("PASS: history routes preserve recorded identities/names/revisions, score independent profiles and show unknown for unassigned/deleted/foreign/missing-profile contexts without writes", flush=True)
 
 
+def verify_file_history(edition_profile):
+    before = p.snapshot()
+    original = p.rows("History")
+    events = [row for row in original if row["EventType"] in (6, 8)]
+    assert {row["MovieEditionId"] for row in events} == {1, 2}
+    assert {row["EventType"] for row in events} == {6, 8}
+    for row in events:
+        assert row["EditionRuleRevision"] == 1
+        assert json.loads(row["Data"])["movieEditionName"] == {1: "Theatrical IMAX", 2: "Directors Cut 3D"}[row["MovieEditionId"]]
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "Name"=?,"QualityProfileId"=?,"MatchRules"=?,"RuleRevision"="RuleRevision"+1 WHERE "Id"=2',
+                   ("Synthetic Renamed Director 3D", edition_profile, '["SyntheticRenamedHistoryGroup$"]'))
+    p.start()
+    p.command("RenameMovie", movieIds=[1])
+    renamed = p.snapshot()
+    assert renamed[1] == before[1]
+    assert renamed[2][0] == before[2][0] and renamed[2][1] != before[2][1] and renamed[2][2] == before[2][2]
+    changed = [row for row in p.rows("History") if row["Id"] not in {old["Id"] for old in original}]
+    assert len(changed) == 1 and changed[0]["EventType"] == 8 and changed[0]["MovieEditionId"] == 2, changed
+    for row in changed:
+        assert row["EditionRuleRevision"] == 2 and json.loads(row["Data"])["movieEditionName"] == "Synthetic Renamed Director 3D"
+    cutoff = max(row["Id"] for row in p.rows("History"))
+    p.api("api/v3/moviefile/" + str(renamed[2][0]), method="DELETE")
+    remaining = p.api("api/v3/moviefile?movieId=1")
+    assert len(remaining) == 1 and remaining[0]["id"] == renamed[1][0]
+    assert not (p.MOVIE / renamed[2][1]).exists() and not (p.MOVIE / renamed[2][4]).exists()
+    assert hashlib.sha256((p.MOVIE / renamed[1][1]).read_bytes()).hexdigest() == renamed[1][2]
+    assert (p.MOVIE / renamed[1][4]).read_text() == renamed[1][5]
+    deleted = [row for row in p.rows("History") if row["Id"] > cutoff]
+    assert len(deleted) == 1 and deleted[0]["EventType"] == 6 and deleted[0]["MovieEditionId"] == 2, deleted
+    assert deleted[0]["EditionRuleRevision"] == 2 and json.loads(deleted[0]["Data"])["movieEditionName"] == "Synthetic Renamed Director 3D"
+    empty = next(row for row in p.api("api/v3/movieedition?movieId=1") if row["id"] == 2)
+    assert empty["state"] == "missing"
+    loaded = next(row for row in p.api("api/v3/history/movie?movieId=1&includeMovie=true") if row["id"] == deleted[0]["Id"])
+    assert loaded["editionContextValid"] and loaded["customFormatScore"] == 77 and loaded["qualityProfileId"] == edition_profile
+    assert loaded["movie"]["movieFileId"] == renamed[1][0]
+    # A file-deleted event keeps its target even after that edition is refilled.
+    p.manual(2, "SyntheticHistoryRefill", "purple")
+    p.command("RescanMovie", movieId=1)
+    p.stop()
+    p.start()
+    after = p.snapshot()
+    assert after[1] == renamed[1] and after[2][0] != renamed[2][0]
+    current = {row["Id"]: row for row in p.rows("History")}
+    assert all(current[row["Id"]] == row for row in original + changed + deleted)
+    loaded = next(row for row in p.api("api/v3/history/movie?movieId=1") if row["id"] == deleted[0]["Id"])
+    assert loaded["movieEditionId"] == 2 and loaded["movieEditionName"] == "Synthetic Renamed Director 3D" and loaded["editionRuleRevision"] == 2
+    assert loaded["customFormatScore"] == 77
+    assert not p.rows("DownloadHistory")
+    print("PASS: rename and upgrade-deletion events record each file's edition, name and revision without rewriting prior history", flush=True)
+    print("PASS: secondary rename/delete/refill preserves the primary video/subtitle bytes and IDs; deleted-target history remains scored and assigned across missing/refill/restart", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -1116,6 +1170,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "file-history":
+        verify_file_history(secondary["id"])
+        return
     if scenario == "activity-contexts":
         verify_activity_contexts(secondary["id"])
         return
