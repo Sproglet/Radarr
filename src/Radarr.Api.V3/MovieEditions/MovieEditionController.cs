@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Movies;
+using NzbDrone.Core.Organizer;
 using Radarr.Http;
 using Radarr.Http.REST;
 
@@ -17,12 +18,46 @@ namespace Radarr.Api.V3.MovieEditions
         private readonly IMovieRepository _movies;
         private readonly IMovieEditionRepository _editions;
         private readonly IMovieEditionContextService _contexts;
+        private readonly IMovieEditionNamingPreviewService _namingPreview;
 
-        public MovieEditionController(IMovieRepository movies, IMovieEditionRepository editions, IMovieEditionContextService contexts)
+        public MovieEditionController(IMovieRepository movies, IMovieEditionRepository editions, IMovieEditionContextService contexts, IMovieEditionNamingPreviewService namingPreview)
         {
             _movies = movies;
             _editions = editions;
             _contexts = contexts;
+            _namingPreview = namingPreview;
+        }
+
+        [HttpPost("preview")]
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public Ok<MovieEditionNamingPreview> Preview([FromBody] MovieEditionNamingProposalResource proposal)
+        {
+            if (proposal == null || proposal.QualityProfileId <= 0)
+            {
+                throw new BadRequestException("Provide a proposal and a positive profile ID, or omit the profile to use the movie default.");
+            }
+
+            try
+            {
+                return TypedResults.Ok(_namingPreview.Preview(new MovieEdition
+                {
+                    MovieId = proposal.MovieId, Name = proposal.Name, QualityProfileId = proposal.QualityProfileId ?? 0,
+                    Attributes = proposal.Attributes, MatchRules = proposal.MatchRules
+                }));
+            }
+            catch (ArgumentException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
+            catch (NamingFormatException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
+            catch (ModelNotFoundException ex)
+            {
+                throw new NotFoundException(ex.Message);
+            }
         }
 
         [HttpGet]

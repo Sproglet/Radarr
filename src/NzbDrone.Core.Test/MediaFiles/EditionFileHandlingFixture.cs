@@ -19,6 +19,7 @@ using NzbDrone.Core.Languages;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.MediaFiles.Events;
+using NzbDrone.Core.MediaFiles.MediaInfo;
 using NzbDrone.Core.MediaFiles.MovieImport;
 using NzbDrone.Core.MediaFiles.MovieImport.Aggregation;
 using NzbDrone.Core.MediaFiles.MovieImport.Manual;
@@ -252,6 +253,111 @@ namespace NzbDrone.Core.Test.MediaFiles
             import.Should().Throw<InvalidOperationException>();
             Db.All<MovieFile>().Should().BeEmpty();
             _recycled.Should().BeEmpty();
+        }
+
+        [Test]
+        public void naming_preview_defaults_cut_and_preserves_attributes_without_creating_or_mutating_files()
+        {
+            ManualImport(_imax, "SyntheticPreviewImax");
+            ManualImport(_directors, "SyntheticPreviewDirectors");
+            var before = Db.All<MovieFile>().Select(f => (f.Id, f.RelativePath, f.MovieEditionId)).ToList();
+            var proposal = new MovieEdition
+            {
+                MovieId = _movie.Id, Name = "Synthetic Collector 3D IMAX",
+                Attributes = new Dictionary<string, string> { { "framing", "imax" }, { "stereoscopic", "3d" }, { "custom-label", "Synthetic Collector" } },
+                MatchRules = new List<string> { "SyntheticExclusiveGroup$" }
+            };
+            var result = Mocker.Resolve<MovieEditionNamingPreviewService>().Preview(proposal);
+            result.NamingValid.Should().BeTrue();
+            result.CreationEnabled.Should().BeFalse();
+            result.Samples.Should().HaveCount(3);
+            result.ProposedEdition.Attributes["cut"].Should().Be("theatrical");
+            result.ProposedEdition.Attributes["stereoscopic"].Should().Be("3d");
+            result.ProposedEdition.Attributes["custom-label"].Should().Be("Synthetic Collector");
+            proposal.Attributes.Should().NotContainKey("cut");
+            Db.All<MovieFile>().Select(f => (f.Id, f.RelativePath, f.MovieEditionId)).Should().BeEquivalentTo(before);
+            _editions.GetByMovie(_movie.Id).Should().HaveCount(2);
+            _recycled.Should().BeEmpty();
+        }
+
+        [TestCase(false, "{Movie Title} [{Managed Edition}]")]
+        [TestCase(true, "{Movie Title}")]
+        [TestCase(true, "{Movie Title} [{Managed Edition:10}]")]
+        public void naming_preview_requires_enabled_renaming_and_a_full_managed_label(bool enabled, string format)
+        {
+            _naming.RenameMovies = enabled;
+            _naming.StandardMovieFormat = format;
+            var result = Mocker.Resolve<MovieEditionNamingPreviewService>().Preview(new MovieEdition { MovieId = _movie.Id, Name = "Synthetic Preview" });
+            result.NamingValid.Should().BeFalse();
+            result.Rejections.Should().Contain(r => r.Contains("{Managed Edition}"));
+        }
+
+        [Test]
+        public void naming_preview_rejects_sanitized_collision_between_distinct_display_names()
+        {
+            ManualImport(_imax, "SyntheticPreviewImax");
+            _imax.Name = "Synthetic/Variant";
+            _editions.SetFields(_imax, e => e.Name);
+            var result = Mocker.Resolve<MovieEditionNamingPreviewService>().Preview(new MovieEdition { MovieId = _movie.Id, Name = @"Synthetic\Variant" });
+            result.NamingValid.Should().BeFalse();
+            result.Rejections.Should().Contain(r => r.Contains("same destination"));
+            Db.All<MovieFile>().Should().HaveCount(1);
+            _recycled.Should().BeEmpty();
+        }
+
+        [Test]
+        public void naming_preview_does_not_refresh_media_information_for_naming_tokens()
+        {
+            ManualImport(_imax, "SyntheticPreviewImax");
+            _naming.StandardMovieFormat += " {MediaInfo VideoCodec}";
+            Mocker.Resolve<MovieEditionNamingPreviewService>().Preview(new MovieEdition { MovieId = _movie.Id, Name = "Synthetic Preview" }).NamingValid.Should().BeTrue();
+            Mocker.GetMock<IUpdateMediaInfo>().Verify(s => s.Update(It.IsAny<MovieFile>(), It.IsAny<Movie>()), Times.Never());
+        }
+
+        [Test]
+        public void naming_preview_requires_an_owned_reference_file_when_the_movie_is_empty()
+        {
+            var result = Mocker.Resolve<MovieEditionNamingPreviewService>().Preview(new MovieEdition { MovieId = _movie.Id, Name = "Synthetic Preview" });
+            result.NamingValid.Should().BeFalse();
+            result.Rejections.Should().Contain(r => r.Contains("first edition file"));
+        }
+
+        [Test]
+        public void naming_preview_rejects_an_unassigned_file_record_with_the_same_basename_and_another_extension()
+        {
+            ManualImport(_imax, "SyntheticPreviewImax");
+            var service = Mocker.Resolve<MovieEditionNamingPreviewService>();
+            var proposal = new MovieEdition { MovieId = _movie.Id, Name = "Synthetic Preview" };
+            var candidate = service.Preview(proposal).Samples.Last().RelativePath;
+            Db.Insert(new MovieFile
+            {
+                MovieId = _movie.Id, RelativePath = Path.ChangeExtension(candidate, ".avi"), Size = 1,
+                Quality = new QualityModel(Quality.Bluray1080p), Languages = new List<Language> { Language.English },
+                DateAdded = DateTime.UtcNow, ReleaseGroup = "SyntheticGroup"
+            });
+            var result = service.Preview(proposal);
+            result.NamingValid.Should().BeFalse();
+            result.Rejections.Should().Contain(r => r.Contains("sidecar basename"));
+            Db.All<MovieFile>().Should().HaveCount(2);
+            _recycled.Should().BeEmpty();
+        }
+
+        [Test]
+        public void naming_preview_rejects_control_characters_in_a_proposed_label()
+        {
+            Action preview = () => Mocker.Resolve<MovieEditionNamingPreviewService>().Preview(new MovieEdition { MovieId = _movie.Id, Name = "Synthetic\0Cut" });
+            preview.Should().Throw<ArgumentException>();
+            Db.All<MovieFile>().Should().BeEmpty();
+            _editions.GetByMovie(_movie.Id).Should().HaveCount(2);
+        }
+
+        [Test]
+        public void naming_preview_rejects_a_display_name_that_sanitizes_to_an_empty_label()
+        {
+            ManualImport(_imax, "SyntheticPreviewImax");
+            var result = Mocker.Resolve<MovieEditionNamingPreviewService>().Preview(new MovieEdition { MovieId = _movie.Id, Name = "<>" });
+            result.NamingValid.Should().BeFalse();
+            result.Rejections.Should().Contain(r => r.Contains("usable filename label"));
         }
 
         [Test]

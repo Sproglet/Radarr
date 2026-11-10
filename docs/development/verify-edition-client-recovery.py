@@ -434,9 +434,57 @@ def verify_profile_deletion(secondary_profile):
     print("PASS: profile HTTP deletion returns 409 for secondary/empty edition references, succeeds after release, and preserves both editions across restarts", flush=True)
 
 
+def verify_naming_preview():
+    before = p.snapshot()
+    editions = p.rows("MovieEditions")
+    files = p.rows("MovieFiles")
+    history = p.rows("History")
+    naming = p.api("api/v3/config/naming")
+    body = {"movieId": 1, "name": "Synthetic Collector 3D IMAX", "attributes": {"framing": "imax", "stereoscopic": "3d", "custom-label": "Synthetic Open Label"},
+            "matchRules": ["SyntheticExclusiveGroup$"], "monitored": True, "id": 999, "movieFileId": before[2][0]}
+    preview = p.api("api/v3/movieedition/preview", body)
+    assert preview["namingValid"] and not preview["creationEnabled"], preview
+    proposed = preview["proposedEdition"]
+    assert proposed["id"] == 0 and not proposed["monitored"] and proposed["qualityProfileId"] == 1, proposed
+    assert proposed["attributes"] == dict(body["attributes"], cut="theatrical"), proposed
+    assert preview["referenceMovieFileId"] == before[1][0] and len(preview["samples"]) == 3, preview
+    assert len({Path(s["relativePath"]).stem.casefold() for s in preview["samples"]}) == 3, preview
+    for name in ["theatrical imax", "<>"]:
+        rejected = p.api("api/v3/movieedition/preview", dict(body, name=name))
+        assert not rejected["namingValid"] and rejected["rejections"] and not rejected["creationEnabled"], rejected
+    for changes, expected in [({"movieId": 0}, 400), ({"movieId": 999999}, 404), ({"name": ""}, 400),
+            ({"qualityProfileId": 999999}, 404), ({"qualityProfileId": 0}, 400), ({"matchRules": ["["]}, 400), ({"name": "Synthetic\u0000Cut"}, 400),
+            ({"attributes": {"cut": "theatrical", "Cut": "directors-cut"}}, 400)]:
+        try:
+            original_api("api/v3/movieedition/preview", dict(body, **changes))
+        except urllib.error.HTTPError as error:
+            assert error.code == expected, (error.code, error.read().decode())
+        else:
+            raise AssertionError("Expected invalid proposal rejection")
+    for overrides in [{"renameMovies": False}, {"standardMovieFormat": "{Movie Title} ({Release Year})"}]:
+        p.api("api/v3/config/naming/" + str(naming["id"]), dict(naming, **overrides), "PUT")
+        rejected = p.api("api/v3/movieedition/preview", body)
+        assert not rejected["namingValid"] and any("{Managed Edition}" in r for r in rejected["rejections"]), rejected
+    p.api("api/v3/config/naming/" + str(naming["id"]), naming, "PUT")
+    assert p.rows("MovieEditions") == editions and p.rows("MovieFiles") == files and p.rows("History") == history
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "Name"=? WHERE "Id"=1', ("Synthetic/Variant",))
+    p.start()
+    rejected = p.api("api/v3/movieedition/preview", dict(body, name="Synthetic\\Variant"))
+    assert not rejected["namingValid"] and any("same destination" in r for r in rejected["rejections"]), rejected
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "Name"=? WHERE "Id"=1', (editions[0]["Name"],))
+    p.start()
+    assert p.snapshot() == before and p.rows("MovieEditions") == editions and p.rows("MovieFiles") == files and p.rows("History") == history
+    print("PASS: naming preview preserves combined/custom attributes, defaults missing cut, exposes distinct samples and rejects naming/sanitization conflicts", flush=True)
+    print("PASS: invalid proposals reject; preview creates no target, enables no acquisition and changes no recorded files/history across restarts", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -445,6 +493,9 @@ def run():
     p.run()
     if scenario == "edition-read":
         verify_edition_reads()
+        return
+    if scenario == "naming-preview":
+        verify_naming_preview()
         return
     secondary = configure_profiles()
     if scenario == "profiles":
