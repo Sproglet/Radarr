@@ -2,8 +2,6 @@ using System.Collections.Generic;
 using System.Linq;
 using Dapper;
 using NzbDrone.Core.Datastore;
-using NzbDrone.Core.MediaFiles;
-using NzbDrone.Core.Movies;
 
 namespace NzbDrone.Core.MovieStats
 {
@@ -15,9 +13,6 @@ namespace NzbDrone.Core.MovieStats
 
     public class MovieStatisticsRepository : IMovieStatisticsRepository
     {
-        private const string _selectMoviesTemplate = "SELECT /**select**/ FROM \"Movies\" /**join**/ /**innerjoin**/ /**leftjoin**/ /**where**/ /**groupby**/ /**having**/ /**orderby**/";
-        private const string _selectMovieFilesTemplate = "SELECT /**select**/ FROM \"MovieFiles\" /**join**/ /**innerjoin**/ /**leftjoin**/ /**where**/ /**groupby**/ /**having**/ /**orderby**/";
-
         private readonly IMainDatabase _database;
 
         public MovieStatisticsRepository(IMainDatabase database)
@@ -25,67 +20,50 @@ namespace NzbDrone.Core.MovieStats
             _database = database;
         }
 
-        public List<MovieStatistics> MovieStatistics()
+        public List<MovieStatistics> MovieStatistics() => Query(null);
+
+        public List<MovieStatistics> MovieStatistics(int movieId) => Query(movieId);
+
+        private List<MovieStatistics> Query(int? movieId)
         {
-            return MapResults(Query(MoviesBuilder(), _selectMoviesTemplate),
-                Query(MovieFilesBuilder(), _selectMovieFilesTemplate));
-        }
+            var releaseGroups = _database.DatabaseType == DatabaseType.SQLite
+                ? "GROUP_CONCAT(\"ReleaseGroup\", '|')"
+                : "string_agg(DISTINCT \"ReleaseGroup\", '|')";
+            var qualities = _database.DatabaseType == DatabaseType.SQLite
+                ? "GROUP_CONCAT(JSON_EXTRACT(\"Quality\", '$.quality'), '|')"
+                : "string_agg(DISTINCT \"Quality\"::json->>'quality', '|')";
+            var movieFilter = movieId.HasValue ? @"WHERE m.""Id"" = @movieId" : "";
+            var fileFilter = movieId.HasValue ? @"WHERE ""MovieId"" = @movieId" : "";
+            var editionFilter = movieId.HasValue ? @"WHERE e.""MovieId"" = @movieId" : "";
 
-        public List<MovieStatistics> MovieStatistics(int movieId)
-        {
-            return MapResults(Query(MoviesBuilder().Where<Movie>(x => x.Id == movieId), _selectMoviesTemplate),
-                Query(MovieFilesBuilder().Where<MovieFile>(x => x.MovieId == movieId), _selectMovieFilesTemplate));
-        }
-
-        private List<MovieStatistics> MapResults(List<MovieStatistics> moviesResult, List<MovieStatistics> filesResult)
-        {
-            moviesResult.ForEach(e =>
-            {
-                var file = filesResult.SingleOrDefault(f => f.MovieId == e.MovieId);
-
-                e.SizeOnDisk = file?.SizeOnDisk ?? 0;
-                e.ReleaseGroupsString = file?.ReleaseGroupsString;
-                e.MovieFileQualitiesString = file?.MovieFileQualitiesString;
-            });
-
-            return moviesResult;
-        }
-
-        private List<MovieStatistics> Query(SqlBuilder builder, string template)
-        {
-            var sql = builder.AddTemplate(template).LogQuery();
-
-            using var conn = _database.OpenConnection();
-
-            return conn.Query<MovieStatistics>(sql.RawSql, sql.Parameters).ToList();
-        }
-
-        private SqlBuilder MoviesBuilder()
-        {
-            return new SqlBuilder(_database.DatabaseType)
-                .Select(@"""Movies"".""Id"" AS MovieId,
-                        SUM(CASE WHEN ""MovieFileId"" > 0 THEN 1 ELSE 0 END) AS MovieFileCount")
-                .GroupBy<Movie>(x => x.Id);
-        }
-
-        private SqlBuilder MovieFilesBuilder()
-        {
-            if (_database.DatabaseType == DatabaseType.SQLite)
-            {
-                return new SqlBuilder(_database.DatabaseType)
-                    .Select(@"""MovieId"",
-                            SUM(COALESCE(""Size"", 0)) AS SizeOnDisk,
-                            GROUP_CONCAT(""ReleaseGroup"", '|') AS ReleaseGroupsString,
-                            GROUP_CONCAT(JSON_EXTRACT(""Quality"", '$.quality'), '|') AS MovieFileQualitiesString")
-                    .GroupBy<MovieFile>(x => x.MovieId);
-            }
-
-            return new SqlBuilder(_database.DatabaseType)
-                .Select(@"""MovieId"",
-                        SUM(COALESCE(""Size"", 0)) AS SizeOnDisk,
-                        string_agg(DISTINCT ""ReleaseGroup"", '|') AS ReleaseGroupsString,
-                        string_agg(DISTINCT ""Quality""::json->>'quality', '|') AS MovieFileQualitiesString")
-                .GroupBy<MovieFile>(x => x.MovieId);
+            // Aggregate files and editions separately, so extra targets cannot multiply bytes or file counts.
+            // Retained/unassigned file records count toward deletion/disk totals, never edition availability.
+            var sql = $@"SELECT m.""Id"" AS MovieId,
+                    COALESCE(f.MovieFileCount, 0) AS MovieFileCount,
+                    COALESCE(f.SizeOnDisk, 0) AS SizeOnDisk,
+                    f.ReleaseGroupsString, f.MovieFileQualitiesString,
+                    COALESCE(e.EditionCount, 0) AS EditionCount,
+                    COALESCE(e.EditionFileCount, 0) AS EditionFileCount,
+                    CASE WHEN m.""Monitored"" THEN COALESCE(e.MonitoredEditionCount, 0) ELSE 0 END AS MonitoredEditionCount,
+                    CASE WHEN m.""Monitored"" THEN COALESCE(e.MissingMonitoredEditionCount, 0) ELSE 0 END AS MissingMonitoredEditionCount
+                FROM ""Movies"" m
+                LEFT JOIN (
+                    SELECT ""MovieId"", COUNT(*) AS MovieFileCount, SUM(COALESCE(""Size"", 0)) AS SizeOnDisk,
+                        {releaseGroups} AS ReleaseGroupsString, {qualities} AS MovieFileQualitiesString
+                    FROM ""MovieFiles"" {fileFilter} GROUP BY ""MovieId""
+                ) f ON f.""MovieId"" = m.""Id""
+                LEFT JOIN (
+                    SELECT e.""MovieId"", COUNT(*) AS EditionCount, COUNT(current_file.""Id"") AS EditionFileCount,
+                        SUM(CASE WHEN e.""Monitored"" THEN 1 ELSE 0 END) AS MonitoredEditionCount,
+                        SUM(CASE WHEN e.""Monitored"" AND current_file.""Id"" IS NULL THEN 1 ELSE 0 END) AS MissingMonitoredEditionCount
+                    FROM ""MovieEditions"" e
+                    LEFT JOIN ""MovieFiles"" current_file ON current_file.""Id"" = e.""MovieFileId""
+                        AND current_file.""MovieId"" = e.""MovieId"" AND current_file.""MovieEditionId"" = e.""Id""
+                    {editionFilter} GROUP BY e.""MovieId""
+                ) e ON e.""MovieId"" = m.""Id""
+                {movieFilter}";
+            using var connection = _database.OpenConnection();
+            return connection.Query<MovieStatistics>(sql, new { movieId }).ToList();
         }
     }
 }

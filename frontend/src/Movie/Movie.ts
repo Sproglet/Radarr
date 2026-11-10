@@ -29,6 +29,7 @@ export interface Collection {
 
 export interface Statistics {
   movieFileCount: number;
+  editionFileCount: number;
   releaseGroups: string[];
   movieFileQualities: Quality[];
   sizeOnDisk: number;
@@ -94,6 +95,10 @@ interface Movie extends ModelBase {
   movieFileId: number;
   movieFile?: MovieFile;
   hasFile: boolean;
+  hasAnyEditionFile: boolean;
+  editionCount: number;
+  monitoredEditionCount: number;
+  missingMonitoredEditionCount: number;
   grabbed?: boolean;
   lastSearchTime?: string;
   isAvailable: boolean;

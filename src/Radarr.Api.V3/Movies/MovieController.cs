@@ -310,9 +310,7 @@ namespace Radarr.Api.V3.Movies
 
         private void LinkMovieStatistics(MovieResource resource, MovieStatistics movieStatistics)
         {
-            resource.Statistics = movieStatistics.ToResource();
-            resource.HasFile = movieStatistics.MovieFileCount > 0;
-            resource.SizeOnDisk = movieStatistics.SizeOnDisk;
+            resource.ApplyStatistics(movieStatistics);
         }
 
         [NonAction]

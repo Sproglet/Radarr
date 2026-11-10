@@ -10,6 +10,7 @@ Append --postgres to a scenario to use unique disposable main/log databases on
 the dedicated radarr-edition-postgres alias (python3-psycopg2 required).
 """
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -482,9 +483,61 @@ def verify_naming_preview():
     print("PASS: invalid proposals reject; preview creates no target, enables no acquisition and changes no recorded files/history across restarts", flush=True)
 
 
+
+def verify_statistics():
+    before = p.snapshot()
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "Movies" SET "Monitored"=TRUE WHERE "Id"=1')
+        db.execute('UPDATE "MovieEditions" SET "Monitored"=TRUE WHERE "MovieId"=1')
+        for eid, monitored in [(3, True), (4, False)]:
+            db.execute('''INSERT INTO "MovieEditions" ("Id","MovieId","EditionKey","Name","Monitored","QualityProfileId","Attributes")
+                VALUES (?,1,?,?,?,1,'{}')''', (eid, "synthetic-statistics-" + str(eid), "Synthetic Missing " + str(eid), monitored))
+    p.start()
+
+    def check(files, available, monitored, missing, has_primary):
+        movie = p.api("api/v3/movie/1")
+        collection = p.api("api/v3/movie")
+        assert len(collection) == 1 and collection[0]["id"] == 1, collection
+        queried = p.api("api/v3/movie?tmdbId=" + str(movie["tmdbId"]))
+        resources = [movie, collection[0], queried[0]]
+        if not has_primary:
+            wanted = p.api("api/v3/wanted/missing?monitored=" + str(movie["monitored"]).lower())
+            assert wanted["totalRecords"] == 1, wanted
+            resources += wanted["records"]
+        for resource in resources:
+            assert resource["hasFile"] == has_primary, resource
+            assert resource["movieFileId"] == (before[1][0] if has_primary else 0), resource
+            assert (resource.get("movieFile") or {}).get("id", 0) == (before[1][0] if has_primary else 0), resource
+            assert resource["hasAnyEditionFile"] == (available > 0) and resource["editionCount"] == 4, resource
+            assert resource["monitoredEditionCount"] == monitored and resource["missingMonitoredEditionCount"] == missing, resource
+            stats = resource["statistics"]
+            assert stats["movieFileCount"] == files and stats["editionFileCount"] == available, resource
+            assert stats["sizeOnDisk"] == sum(f["Size"] for f in p.rows("MovieFiles")), resource
+        return movie
+
+    check(2, 2, 3, 1, True)
+    assert p.snapshot() == before
+    p.api("api/v3/moviefile/" + str(before[1][0]), method="DELETE")
+    check(1, 1, 3, 2, False)
+    other = next(f for f in p.rows("MovieFiles") if f["MovieEditionId"] == 2)
+    subtitle = next(f for f in p.rows("SubtitleFiles") if f["MovieFileId"] == other["Id"])
+    assert (other["Id"], other["RelativePath"], hashlib.sha256((p.MOVIE / other["RelativePath"]).read_bytes()).hexdigest(),
+            subtitle["Id"], subtitle["RelativePath"], (p.MOVIE / subtitle["RelativePath"]).read_text()) == before[2]
+    movie = p.api("api/v3/movie/1")
+    p.api("api/v3/movie/1", dict(movie, monitored=False), "PUT")
+    check(1, 1, 0, 0, False)
+    assert [e["Monitored"] for e in p.rows("MovieEditions")] == [True, True, True, False]
+    p.stop()
+    p.start()
+    check(1, 1, 0, 0, False)
+    print("PASS: list/detail/TMDB statistics count both edition files once and retain primary-only hasFile after primary deletion", flush=True)
+    print("PASS: secondary video/subtitle survive deletion and restart; master monitoring controls wanted counts without changing edition preferences", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -493,6 +546,9 @@ def run():
     p.run()
     if scenario == "edition-read":
         verify_edition_reads()
+        return
+    if scenario == "statistics":
+        verify_statistics()
         return
     if scenario == "naming-preview":
         verify_naming_preview()

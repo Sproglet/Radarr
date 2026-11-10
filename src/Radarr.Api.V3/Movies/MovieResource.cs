@@ -59,6 +59,10 @@ namespace Radarr.Api.V3.Movies
         // Compatibility
         public bool? HasFile { get; set; }
         public int MovieFileId { get; set; }
+        public bool HasAnyEditionFile { get; set; }
+        public int EditionCount { get; set; }
+        public int MonitoredEditionCount { get; set; }
+        public int MissingMonitoredEditionCount { get; set; }
 
         // Editing Only
         public bool Monitored { get; set; }
@@ -135,6 +139,7 @@ namespace Radarr.Api.V3.Movies
                 SecondaryYear = model.MovieMetadata.Value.SecondaryYear,
 
                 MovieFileId = model.MovieFileId,
+                HasFile = model.HasFile,
 
                 Path = model.Path,
                 QualityProfileId = model.QualityProfileId,
