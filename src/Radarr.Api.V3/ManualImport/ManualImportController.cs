@@ -73,6 +73,7 @@ namespace Radarr.Api.V3.ManualImport
                 item.Movie = processedItem.Movie.ToResource(0);
                 item.MovieEditionId = processedItem.MovieEditionId;
                 item.MovieEditionName = processedItem.MovieEditionName;
+                item.EditionAssignmentValid = processedItem.EditionAssignmentValid;
                 item.DownloadClientId = processedItem.DownloadClientId;
                 item.IndexerFlags = processedItem.IndexerFlags;
                 item.Rejections = processedItem.Rejections.Select(r => r.ToResource());

@@ -35,6 +35,8 @@ interface InteractiveImport extends ModelBase {
   rejections: Rejection[];
   movieFileId?: number;
   movieEditionId?: number;
+  movieEditionName?: string;
+  editionAssignmentValid?: boolean;
   downloadId?: string;
   downloadClientId?: number;
 }

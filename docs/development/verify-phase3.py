@@ -106,7 +106,7 @@ def snapshot():
             extra["Id"], extra["RelativePath"], (MOVIE / extra["RelativePath"]).read_text(),
         )
     editions = rows("MovieEditions")
-    assert {e["Id"]: e["MovieFileId"] for e in editions} == {k: v[0] for k, v in result.items()}
+    assert {e["Id"]: e["MovieFileId"] for e in editions if e["MovieFileId"] is not None} == {k: v[0] for k, v in result.items()}
     assert json.loads(editions[0]["Attributes"]) == {"cut": "theatrical", "framing": "imax"}
     assert json.loads(editions[1]["Attributes"]) == {"cut": "directors-cut", "stereoscopic": "3d"}
     movie = api("api/v3/movie/1")

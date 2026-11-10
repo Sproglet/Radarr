@@ -87,6 +87,11 @@ const COLUMNS = [
     isVisible: true,
   },
   {
+    name: 'edition',
+    label: () => translate('Edition'),
+    isVisible: true,
+  },
+  {
     name: 'releaseGroup',
     label: () => translate('ReleaseGroup'),
     isVisible: true,
@@ -437,6 +442,17 @@ function InteractiveImportModalContent(
         translate('InteractiveImportNoImportMode')
       );
 
+      return;
+    }
+
+    if (
+      items.some(
+        (item) =>
+          selectedIds.includes(item.id) &&
+          (!item.movieEditionId || !item.editionAssignmentValid)
+      )
+    ) {
+      setInteractiveImportErrorMessage(translate('SelectValidEdition'));
       return;
     }
 

@@ -13,6 +13,7 @@ namespace Radarr.Api.V3.ManualImport
         public int MovieId { get; set; }
         public int? MovieEditionId { get; set; }
         public string MovieEditionName { get; set; }
+        public bool EditionAssignmentValid { get; set; }
         public MovieResource Movie { get; set; }
         public QualityModel Quality { get; set; }
         public List<Language> Languages { get; set; }

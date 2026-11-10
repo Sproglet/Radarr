@@ -38,8 +38,8 @@ Module._load = function(request, parent, isMain) {
 const actions = require(path.join(root, 'frontend/src/Store/Actions/interactiveImportActions.js'));
 const reducer = actions.reducers;
 const initial = { ...actions.defaultState, items: [
-  { id: 101, movie: { id: 1 }, movieEditionId: 11, downloadClientId: 41, downloadId: 'synthetic-shared-id', path: '/synthetic/theatrical-imax.mkv' },
-  { id: 102, movie: { id: 1 }, movieEditionId: 12, downloadClientId: 42, downloadId: 'synthetic-shared-id', path: '/synthetic/directors-3d.mkv' },
+  { id: 101, movie: { id: 1 }, movieEditionId: 11, movieEditionName: 'Synthetic Theatrical IMAX', editionAssignmentValid: true, downloadClientId: 41, downloadId: 'synthetic-shared-id', path: '/synthetic/theatrical-imax.mkv' },
+  { id: 102, movie: { id: 1 }, movieEditionId: 12, movieEditionName: 'Synthetic Directors 3D', editionAssignmentValid: true, downloadClientId: 42, downloadId: 'synthetic-shared-id', path: '/synthetic/directors-3d.mkv' },
 ] };
 let state = reducer(initial, actions.updateInteractiveImportItem({ id: 101, releaseGroup: 'SyntheticGroup' }));
 state = reducer(state, actions.updateInteractiveImportItems({ ids: [101, 102], movie: { id: 1 } }));
@@ -54,9 +54,16 @@ assert.deepEqual(JSON.parse(requests.at(-1).data).map(i => [i.movieEditionId, i.
 console.log('PASS: single/bulk edits and actual reprocess requests preserve distinct client/edition identities with a shared download ID');
 const single = reducer(state, actions.updateInteractiveImportItem({ id: 101, movie: { id: 2 } }));
 assert.equal(single.items[0].movieEditionId, undefined);
+assert.equal(single.items[0].movieEditionName, undefined);
+assert.equal(single.items[0].editionAssignmentValid, false);
 assert.equal(single.items[0].downloadClientId, 41);
 assert.equal(single.items[1].movieEditionId, 12);
 const bulk = reducer(state, actions.updateInteractiveImportItems({ ids: [101, 102], movie: { id: 2 } }));
 assert.deepEqual(bulk.items.map(i => i.movieEditionId), [undefined, undefined]);
 assert.deepEqual(state.items.map(i => i.movieEditionId), [11, 12]);
 console.log('PASS: changing movies clears stale edition IDs per item without losing the saved client or mutating prior state');
+
+const reassigned = reducer(state, actions.updateInteractiveImportItem({ id: 101, movieEditionId: 12, movieEditionName: 'Synthetic Directors 3D' }));
+assert.equal(reassigned.items[0].editionAssignmentValid, false);
+assert.equal(reassigned.items[1].editionAssignmentValid, true);
+console.log('PASS: changing an edition requires fresh server validation before the assignment becomes valid');

@@ -208,7 +208,7 @@ def verify_manual(clients):
         assert processed["movieEditionId"] == file["movieEditionId"] and processed["downloadClientId"] == file["downloadClientId"], processed
     wrong = dict(files[1], movieEditionId=1)
     processed = p.api("api/v3/manualimport", [wrong])[0]
-    assert any("saved assignment" in r["reason"] for r in processed["rejections"]), processed
+    assert any("saved assignment" in r["reason"] for r in processed["rejections"]) and not processed["editionAssignmentValid"], processed
     try:
         p.command("ManualImport", importMode="copy", files=[files[0], wrong])
     except AssertionError as error:
@@ -235,7 +235,8 @@ def verify_manual(clients):
     print("PASS: both same-ID manual imports replace only their saved edition, settle the correct client and survive restart", flush=True)
 
 
-def verify_browser_manual(clients, before):
+def configure_browser_auth():
+    assert (p.APP / "UI" / "index.html").read_bytes() == Path("/src/_output/UI/index.html").read_bytes(), "Copy the current UI contents into the application UI folder before browser verification"
     host = p.api("api/v3/config/host")
     host.update(authenticationMethod="forms", authenticationRequired="disabledForLocalAddresses", allowedHosts="127.0.0.1,localhost",
                 username="synthetic-browser-user", password="synthetic-browser-password",
@@ -243,6 +244,10 @@ def verify_browser_manual(clients, before):
     p.api("api/v3/config/host", host, "PUT")
     p.stop()
     p.start()
+
+
+def verify_browser_manual(clients, before):
+    configure_browser_auth()
     for client in clients:
         label = {1: "Theatrical.IMAX", 2: "Directors.Cut.3D"}[client.number]
         path = p.source("SyntheticBrowser." + label + ".1080p.BluRay", {1: "yellow", 2: "purple"}[client.number])
@@ -299,7 +304,9 @@ def verify_edition_reads():
         item = {"path": str(path), "movieId": 1, "movieEditionId": edition["id"], "releaseGroup": "SyntheticGroup",
                 "quality": {"quality": {"id": 7}}, "languages": [{"id": 1}], "indexerFlags": 0}
         processed = p.api("api/v3/manualimport", [item])[0]
-        assert processed["movieEditionName"] == edition["name"], processed
+        assert processed["movieEditionName"] == edition["name"] and processed["editionAssignmentValid"], processed
+    ambiguous = p.api("api/v3/manualimport", [dict(item, movieEditionId=None, editionAssignmentValid=True)])[0]
+    assert not ambiguous["editionAssignmentValid"] and ambiguous.get("movieEditionId") is None and ambiguous["customFormatScore"] == 0, ambiguous
     assert p.rows("MovieEditions") == editions_before and p.snapshot() == before
     profile = p.api("api/v3/qualityprofile/1")
     profile.pop("id")
@@ -341,14 +348,37 @@ def verify_edition_reads():
     print("PASS: API rejects invalid parents and write methods; manual preview/reprocess names match the validated target", flush=True)
 
 
-def run():
-    scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read"}:
-        raise ValueError("Unknown synthetic-client scenario: " + scenario)
-    p.run()
-    if scenario == "edition-read":
-        verify_edition_reads()
-        return
+def verify_selector_imports(secondary_profile):
+    configure_browser_auth()
+    before = p.snapshot()
+    p.stop()
+    with sqlite3.connect(p.CONFIG / "radarr.db") as db:
+        db.execute("UPDATE MovieEditions SET QualityProfileId=? WHERE Id=2", (secondary_profile,))
+        db.execute("""INSERT INTO MovieEditions (Id,MovieId,EditionKey,Name,Monitored,QualityProfileId,Attributes)
+            VALUES (3,1,'synthetic-invalid','Synthetic Invalid Target',0,999999,'{}')""")
+        for file in p.rows("MovieFiles"):
+            quality = json.loads(file["Quality"])
+            quality["quality"] = 1
+            db.execute("UPDATE MovieFiles SET Quality=? WHERE Id=?", (json.dumps(quality), file["Id"]))
+    p.start()
+    for edition, marker, colour in [(1, "IMAX.SyntheticSelector", "yellow"), (2, "Directors.Cut.3D.SyntheticSelector", "purple")]:
+        path = p.source(marker, colour)
+        previous = p.snapshot()
+        subprocess.run(["node", "/src/docs/development/verify-edition-selector-browser.cjs", str(edition), str(path.parent)], check=True)
+        current = p.snapshot()
+        assert current[edition][0] != previous[edition][0]
+        assert current[3 - edition] == previous[3 - edition]
+        assert not p.rows("DownloadHistory")
+        p.command("RescanMovie", movieId=1)
+        p.command("RenameMovie", movieIds=[1])
+        p.stop()
+        p.start()
+        assert p.snapshot() == current
+    assert before[1][0] != current[1][0] and before[2][0] != current[2][0]
+    print("PASS: both explicit browser edition selections upgrade independently through scan/rename/restart; invalid targets cannot be selected", flush=True)
+
+
+def configure_profiles():
     custom = p.api("api/v3/customformat", {"name": "Synthetic Queue Score", "includeCustomFormatWhenRenaming": False,
         "specifications": [{"name": "Synthetic Match", "implementation": "ReleaseTitleSpecification", "negate": False,
                             "required": True, "fields": [{"name": "value", "value": ".+"}]}]}, "POST")
@@ -360,6 +390,21 @@ def run():
     profile["name"] = "Synthetic Secondary Queue Profile"
     profile["formatItems"][0]["score"] = 77
     secondary = p.api("api/v3/qualityprofile", profile, "POST")
+    return secondary
+
+
+def run():
+    scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select"}:
+        raise ValueError("Unknown synthetic-client scenario: " + scenario)
+    p.run()
+    if scenario == "edition-read":
+        verify_edition_reads()
+        return
+    secondary = configure_profiles()
+    if scenario == "manual-select":
+        verify_selector_imports(secondary["id"])
+        return
     before = p.snapshot()
     p.stop()
     clients = [SyntheticSab(1), SyntheticSab(2)]

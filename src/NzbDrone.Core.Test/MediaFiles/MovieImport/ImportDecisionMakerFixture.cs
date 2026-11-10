@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using FizzWare.NBuilder;
@@ -113,6 +114,43 @@ namespace NzbDrone.Core.Test.MediaFiles.MovieImport
             var results = Subject.GetImportDecisions(_videoFiles, _movie, item, null, true, false);
             results.Single().Approved.Should().BeFalse();
             Mocker.GetMock<IAggregationService>().Verify(s => s.Augment(It.IsAny<LocalMovie>(), item), Times.Never());
+        }
+
+        [TestCase(1)]
+        [TestCase(2)]
+        public void file_preview_resolves_unique_default_or_owned_edition_before_policy(int editionId)
+        {
+            GivenVideoFiles(new[] { @"C:\Test\Unsorted\Synthetic.Voyage.2026-SyntheticGroup.mkv".AsOsAgnostic() });
+            var originalProfile = _movie.QualityProfile;
+            var context = new MovieEditionContext(new MovieEdition { Id = editionId, MovieId = _movie.Id },
+                new QualityProfile { Id = 22 }, null, editionId == 2);
+            Mocker.GetMock<IMovieEditionContextService>().Setup(s => s.Resolve(_movie, null, _videoFiles[0])).Returns(context);
+            GivenAugmentationSuccess();
+            GivenSpecifications(_pass1);
+
+            var result = Subject.GetImportDecisions(_videoFiles, _movie, null, null, true, false).Single();
+
+            result.Approved.Should().BeTrue();
+            result.LocalMovie.EditionContext.Should().BeSameAs(context);
+            _pass1.Verify(s => s.IsSatisfiedBy(It.Is<LocalMovie>(m => m.EditionContext == context), null), Times.Once());
+            _movie.QualityProfile.Should().BeSameAs(originalProfile);
+        }
+
+        [Test]
+        public void ambiguous_file_preview_rejects_before_using_a_primary_policy()
+        {
+            GivenVideoFiles(new[] { @"C:\Test\Unsorted\Synthetic.Voyage.2026-SyntheticGroup.mkv".AsOsAgnostic() });
+            Mocker.GetMock<IMovieEditionContextService>().Setup(s => s.Resolve(_movie, null, _videoFiles[0]))
+                .Throws(new InvalidOperationException("Select an edition explicitly"));
+            GivenAugmentationSuccess();
+            GivenSpecifications(_pass1);
+
+            var result = Subject.GetImportDecisions(_videoFiles, _movie, null, null, true, false).Single();
+
+            result.Approved.Should().BeFalse();
+            result.Rejections.Should().Contain(r => r.Reason == ImportRejectionReason.InvalidMovie);
+            result.LocalMovie.EditionContext.Should().BeNull();
+            _pass1.Verify(s => s.IsSatisfiedBy(It.IsAny<LocalMovie>(), It.IsAny<DownloadClientItem>()), Times.Never());
         }
 
         private void GivenSpecifications(params Mock<IImportDecisionEngineSpecification>[] mocks)

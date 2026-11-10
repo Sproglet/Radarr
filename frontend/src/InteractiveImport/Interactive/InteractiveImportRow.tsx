@@ -8,6 +8,7 @@ import Column from 'Components/Table/Column';
 import TableRow from 'Components/Table/TableRow';
 import Popover from 'Components/Tooltip/Popover';
 import { icons, kinds, tooltipPositions } from 'Helpers/Props';
+import SelectEditionModal from 'InteractiveImport/Edition/SelectEditionModal';
 import SelectIndexerFlagsModal from 'InteractiveImport/IndexerFlags/SelectIndexerFlagsModal';
 import SelectLanguageModal from 'InteractiveImport/Language/SelectLanguageModal';
 import SelectMovieModal from 'InteractiveImport/Movie/SelectMovieModal';
@@ -16,6 +17,7 @@ import SelectReleaseGroupModal from 'InteractiveImport/ReleaseGroup/SelectReleas
 import Language from 'Language/Language';
 import IndexerFlags from 'Movie/IndexerFlags';
 import Movie from 'Movie/Movie';
+import MovieEdition from 'Movie/MovieEdition';
 import MovieFormats from 'Movie/MovieFormats';
 import MovieLanguages from 'Movie/MovieLanguages';
 import MovieQuality from 'Movie/MovieQuality';
@@ -35,6 +37,7 @@ import styles from './InteractiveImportRow.css';
 
 type SelectType =
   | 'movie'
+  | 'edition'
   | 'releaseGroup'
   | 'quality'
   | 'language'
@@ -49,6 +52,9 @@ interface InteractiveImportRowProps {
   allowMovieChange: boolean;
   relativePath: string;
   movie?: Movie;
+  movieEditionId?: number;
+  movieEditionName?: string;
+  editionAssignmentValid?: boolean;
   releaseGroup?: string;
   quality?: QualityModel;
   languages?: Language[];
@@ -72,6 +78,9 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
     allowMovieChange,
     relativePath,
     movie,
+    movieEditionId,
+    movieEditionName,
+    editionAssignmentValid,
     quality,
     languages,
     releaseGroup,
@@ -81,6 +90,7 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
     indexerFlags,
     rejections,
     isSelected,
+    isReprocessing,
     modalTitle,
     movieFileId,
     columns,
@@ -119,14 +129,31 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
   );
 
   useEffect(() => {
-    const isValid = !!(movie && quality && languages);
+    const isValid = !!(
+      movie &&
+      quality &&
+      languages &&
+      movieEditionId &&
+      editionAssignmentValid &&
+      !isReprocessing
+    );
 
     if (isSelected && !isValid) {
       onValidRowChange(id, false);
     } else {
       onValidRowChange(id, true);
     }
-  }, [id, movie, quality, languages, isSelected, onValidRowChange]);
+  }, [
+    id,
+    movie,
+    quality,
+    languages,
+    movieEditionId,
+    editionAssignmentValid,
+    isReprocessing,
+    isSelected,
+    onValidRowChange,
+  ]);
 
   const handleSelectedChange = useCallback(
     (result: SelectStateInputProps) => {
@@ -156,6 +183,26 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
   const onSelectMoviePress = useCallback(() => {
     setSelectModalOpen('movie');
   }, [setSelectModalOpen]);
+
+  const onSelectEditionPress = useCallback(() => {
+    setSelectModalOpen('edition');
+  }, []);
+
+  const onEditionSelect = useCallback(
+    (edition: MovieEdition) => {
+      dispatch(
+        updateInteractiveImportItem({
+          id,
+          movieEditionId: edition.id,
+          movieEditionName: edition.name,
+        })
+      );
+      dispatch(reprocessInteractiveImportItems({ ids: [id] }));
+      setSelectModalOpen(null);
+      selectRowAfterChange();
+    },
+    [id, dispatch, selectRowAfterChange]
+  );
 
   const onMovieSelect = useCallback(
     (movie: Movie) => {
@@ -293,6 +340,14 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
       ) : null}
 
       <TableRowCellButton
+        isDisabled={!movie || isReprocessing}
+        title={translate('ClickToChangeEdition')}
+        onPress={onSelectEditionPress}
+      >
+        {movieEditionName ?? translate('SelectEdition')}
+      </TableRowCellButton>
+
+      <TableRowCellButton
         title={translate('ClickToChangeReleaseGroup')}
         onPress={onSelectReleaseGroupPress}
       >
@@ -386,6 +441,16 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
           />
         ) : null}
       </TableRowCell>
+
+      {movie ? (
+        <SelectEditionModal
+          isOpen={selectModalOpen === 'edition'}
+          movieId={movie.id}
+          movieEditionId={movieEditionId}
+          onEditionSelect={onEditionSelect}
+          onModalClose={onSelectModalClose}
+        />
+      ) : null}
 
       <SelectMovieModal
         isOpen={selectModalOpen === 'movie'}

@@ -20,8 +20,14 @@ const MAXIMUM_RECENT_FOLDERS = 10;
 function applyImportChanges(item, changes) {
   const updated = Object.assign({}, item, changes);
 
+  if (changes.movieEditionId !== undefined && changes.movieEditionId !== item.movieEditionId) {
+    updated.editionAssignmentValid = false;
+  }
+
   if (changes.movie && changes.movie.id !== item.movie?.id) {
     updated.movieEditionId = undefined;
+    updated.movieEditionName = undefined;
+    updated.editionAssignmentValid = false;
   }
 
   return updated;

@@ -154,6 +154,8 @@ namespace NzbDrone.Core.MediaFiles.MovieImport
                 }
                 else
                 {
+                    localMovie.EditionContext ??= _editionContexts.Resolve(localMovie.Movie, null, localMovie.Path);
+
                     if (downloadClientItem?.DownloadId.IsNotNullOrWhiteSpace() == true)
                     {
                         var trackedDownload = (downloadClientItem.DownloadClientInfo?.Id > 0
