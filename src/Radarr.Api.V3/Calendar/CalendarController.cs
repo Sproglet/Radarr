@@ -33,8 +33,9 @@ namespace Radarr.Api.V3.Calendar
                             ICustomFormatCalculationService formatCalculator,
                             ITagService tagService,
                             IMapCoversToLocal coverMapper,
-                            IConfigService configService)
-            : base(movieService, movieTranslationService, movieStatisticsService, upgradableSpecification, formatCalculator, configService, coverMapper, signalR)
+                            IConfigService configService,
+                            IMovieEditionContextService editionContexts)
+            : base(movieService, movieTranslationService, movieStatisticsService, upgradableSpecification, formatCalculator, configService, coverMapper, signalR, editionContexts)
         {
             _moviesService = movieService;
             _tagService = tagService;

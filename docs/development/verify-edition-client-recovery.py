@@ -864,9 +864,81 @@ def verify_file_profiles(secondary_profile):
     print("PASS: unassigned/foreign-target/missing-profile files expose an explicit invalid context, omit score/profile and never borrow the default; file/subtitle bytes and history survive restart", flush=True)
 
 
+
+def verify_primary_context(edition_profile):
+    before = p.snapshot()
+    default = p.api("api/v3/qualityprofile/1")
+    p.api("api/v3/qualityprofile/1", dict(default, cutoff=1), "PUT")
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=1', (edition_profile,))
+        db.execute('UPDATE "Movies" SET "Monitored"=TRUE WHERE "Id"=1')
+        db.execute('UPDATE "MovieEditions" SET "Monitored"=TRUE WHERE "MovieId"=1')
+        db.execute('''INSERT INTO "MovieEditions" ("Id","MovieId","EditionKey","Name","Monitored","QualityProfileId","Attributes")
+            VALUES (3,1,'synthetic-missing','Synthetic Missing Target',TRUE,1,'{}')''')
+        db.execute('UPDATE "MovieMetadata" SET "PhysicalRelease"=? WHERE "Id"=1', ("2026-11-10T00:00:00Z",))
+        for file in p.rows("MovieFiles"):
+            quality = json.loads(file["Quality"])
+            quality["quality"] = 1
+            db.execute('UPDATE "MovieFiles" SET "Quality"=? WHERE "Id"=?', (json.dumps(quality), file["Id"]))
+    p.start()
+    calendar = "api/v3/calendar?start=2026-11-01&end=2026-12-01&unmonitored=true"
+
+    def resources(include_cutoff=True):
+        result = [p.api("api/v3/movie/1"), *p.api("api/v3/movie"), *p.api("api/v3/movie?tmdbId=-1000001"), *p.api(calendar)]
+        missing = p.api("api/v3/wanted/missing")
+        assert missing["totalRecords"] == 1, missing
+        result += missing["records"]
+        if include_cutoff:
+            cutoff = p.api("api/v3/wanted/cutoff")
+            assert cutoff["totalRecords"] == 1, cutoff
+            result += cutoff["records"]
+        assert len(result) == (6 if include_cutoff else 5), result
+        return result
+
+    editions = p.rows("MovieEditions")
+    files = p.rows("MovieFiles")
+    history = p.rows("History")
+    for resource in resources():
+        assert resource["qualityProfileId"] == 1 and resource["hasFile"] and resource["movieFileId"] == before[1][0], resource
+        file = resource["movieFile"]
+        assert file["id"] == before[1][0] and file["movieEditionId"] == 1 and file["editionContextValid"], resource
+        assert file["qualityProfileId"] == edition_profile and file["qualityCutoffNotMet"], resource
+        if "customFormatScore" in file:
+            assert file["customFormatScore"] == 77, resource
+    assert p.rows("MovieEditions") == editions and p.rows("MovieFiles") == files and p.rows("History") == history
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=999999 WHERE "Id"=1')
+    p.start()
+    for resource in resources(include_cutoff=False):
+        file = resource["movieFile"]
+        assert file["editionContextValid"] is False and file["editionContextError"], resource
+        assert file.get("qualityProfileId") is None and file.get("customFormatScore") is None, resource
+        assert resource["qualityProfileId"] == 1 and resource["movieFileId"] == before[1][0], resource
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=1', (edition_profile,))
+        db.execute('UPDATE "Movies" SET "PrimaryEditionId"=2,"MovieFileId"=? WHERE "Id"=1', (before[2][0],))
+    p.start()
+    for resource in resources():
+        assert resource["qualityProfileId"] == 1 and resource["movieFileId"] == before[2][0], resource
+        file = resource["movieFile"]
+        assert file["id"] == before[2][0] and file["qualityProfileId"] == 1 and not file["qualityCutoffNotMet"], resource
+        if "customFormatScore" in file:
+            assert file["customFormatScore"] == 11, resource
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "Movies" SET "PrimaryEditionId"=1,"MovieFileId"=? WHERE "Id"=1', (before[1][0],))
+    p.start()
+    assert p.snapshot() == before and p.rows("History") == history
+    print("PASS: list/detail/TMDB/calendar/wanted embedded files use the primary edition profile while retaining the movie default", flush=True)
+    print("PASS: invalid primary context cannot borrow the default; primary selection and both files/subtitles survive real process restarts", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -886,6 +958,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "primary-context":
+        verify_primary_context(secondary["id"])
+        return
     if scenario == "file-profiles":
         verify_file_profiles(secondary["id"])
         return

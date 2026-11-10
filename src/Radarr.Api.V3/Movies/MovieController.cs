@@ -39,6 +39,7 @@ namespace Radarr.Api.V3.Movies
                                 IHandle<MediaCoversUpdatedEvent>
     {
         private readonly IMovieService _moviesService;
+        private readonly IMovieEditionContextService _editionContexts;
         private readonly IMovieTranslationService _movieTranslationService;
         private readonly IAddMovieService _addMovieService;
         private readonly IMovieStatisticsService _movieStatisticsService;
@@ -58,6 +59,7 @@ namespace Radarr.Api.V3.Movies
                            IRootFolderService rootFolderService,
                            IUpgradableSpecification qualityUpgradableSpecification,
                            IConfigService configService,
+                           IMovieEditionContextService editionContexts,
                            RootFolderValidator rootFolderValidator,
                            MappedNetworkDriveValidator mappedNetworkDriveValidator,
                            MoviePathValidator moviesPathValidator,
@@ -71,6 +73,7 @@ namespace Radarr.Api.V3.Movies
             : base(signalRBroadcaster)
         {
             _moviesService = moviesService;
+            _editionContexts = editionContexts;
             _movieTranslationService = movieTranslationService;
             _addMovieService = addMovieService;
             _movieStatisticsService = movieStatisticsService;
@@ -152,7 +155,7 @@ namespace Radarr.Api.V3.Movies
                 foreach (var movie in movies)
                 {
                     var translation = GetTranslationFromDict(tdict, movie.MovieMetadata, translationLanguage);
-                    moviesResources.Add(movie.ToResource(availDelay, translation, _qualityUpgradableSpecification));
+                    moviesResources.Add(movie.ToResource(availDelay, translation, _qualityUpgradableSpecification, editionContexts: _editionContexts));
                 }
 
                 if (!excludeLocalCovers)
@@ -190,7 +193,7 @@ namespace Radarr.Api.V3.Movies
             var translations = _movieTranslationService.GetAllTranslationsForMovieMetadata(movie.MovieMetadataId);
             var translation = GetMovieTranslation(translations, movie.MovieMetadata, translationLanguage);
 
-            var resource = movie.ToResource(availDelay, translation, _qualityUpgradableSpecification);
+            var resource = movie.ToResource(availDelay, translation, _qualityUpgradableSpecification, editionContexts: _editionContexts);
             MapCoversToLocal(resource);
             FetchAndLinkMovieStatistics(resource);
 

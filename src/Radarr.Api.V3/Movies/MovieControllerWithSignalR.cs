@@ -24,6 +24,7 @@ namespace Radarr.Api.V3.Movies
                                                          IHandle<MovieFileDeletedEvent>
     {
         protected readonly IMovieService _movieService;
+        protected readonly IMovieEditionContextService _editionContexts;
         protected readonly IMovieTranslationService _movieTranslationService;
         protected readonly IMovieStatisticsService _movieStatisticsService;
         protected readonly IUpgradableSpecification _upgradableSpecification;
@@ -38,10 +39,12 @@ namespace Radarr.Api.V3.Movies
                                            ICustomFormatCalculationService formatCalculator,
                                            IConfigService configService,
                                            IMapCoversToLocal coverMapper,
-                                           IBroadcastSignalRMessage signalRBroadcaster)
+                                           IBroadcastSignalRMessage signalRBroadcaster,
+                                           IMovieEditionContextService editionContexts)
             : base(signalRBroadcaster)
         {
             _movieService = movieService;
+            _editionContexts = editionContexts;
             _movieTranslationService = movieTranslationService;
             _movieStatisticsService = movieStatisticsService;
             _upgradableSpecification = upgradableSpecification;
@@ -54,10 +57,12 @@ namespace Radarr.Api.V3.Movies
                                            IUpgradableSpecification upgradableSpecification,
                                            ICustomFormatCalculationService formatCalculator,
                                            IBroadcastSignalRMessage signalRBroadcaster,
-                                           string resource)
+                                           string resource,
+                                           IMovieEditionContextService editionContexts)
             : base(signalRBroadcaster)
         {
             _movieService = movieService;
+            _editionContexts = editionContexts;
             _upgradableSpecification = upgradableSpecification;
             _formatCalculator = formatCalculator;
         }
@@ -82,7 +87,7 @@ namespace Radarr.Api.V3.Movies
             var translations = _movieTranslationService.GetAllTranslationsForMovieMetadata(movie.MovieMetadataId);
             var translation = GetMovieTranslation(translations, movie.MovieMetadata, language);
 
-            var resource = movie.ToResource(availDelay, translation, _upgradableSpecification, _formatCalculator);
+            var resource = movie.ToResource(availDelay, translation, _upgradableSpecification, _formatCalculator, _editionContexts);
             FetchAndLinkMovieStatistics(resource);
 
             _coverMapper.ConvertToLocalUrls(resource.Id, resource.Images, resource.Added);
@@ -106,7 +111,7 @@ namespace Radarr.Api.V3.Movies
                 var translations = _movieTranslationService.GetAllTranslationsForMovieMetadata(movie.MovieMetadataId);
                 var translation = GetMovieTranslation(translations, movie.MovieMetadata, language);
 
-                var resource = movie.ToResource(availDelay, translation, _upgradableSpecification, _formatCalculator);
+                var resource = movie.ToResource(availDelay, translation, _upgradableSpecification, _formatCalculator, _editionContexts);
                 FetchAndLinkMovieStatistics(resource);
 
                 resources.Add(resource);

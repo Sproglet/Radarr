@@ -89,9 +89,21 @@ namespace NzbDrone.Core.Test.MovieTests
             var wanted = Subject.MoviesWithoutFiles(Page());
             wanted.TotalRecords.Should().Be(1);
             wanted.Records.Should().ContainSingle().Which.MovieFileId.Should().Be(primaryFile.Id);
+            wanted.Records.Single().MovieFile.Id.Should().Be(primaryFile.Id);
+            wanted.Records.Single().QualityProfile.Id.Should().Be(_profile.Id);
             _secondary.Monitored = false;
             Mocker.Resolve<MovieEditionRepository>().SetFields(_secondary, e => e.Monitored);
             Subject.MoviesWithoutFiles(Page()).TotalRecords.Should().Be(0);
+        }
+
+        [Test]
+        public void secondary_cutoff_match_does_not_populate_a_missing_primary_file()
+        {
+            Attach(_secondary, Quality.DVD);
+            var wanted = Cutoff();
+            wanted.TotalRecords.Should().Be(1);
+            wanted.Records.Should().ContainSingle().Which.MovieFileId.Should().Be(0);
+            wanted.Records.Single().MovieFile.Should().BeNull();
         }
 
         [Test]
@@ -129,6 +141,8 @@ namespace NzbDrone.Core.Test.MovieTests
             var wanted = Cutoff(new() { new(_secondaryProfile.Id, new[] { Quality.DVD.Id }) });
             wanted.TotalRecords.Should().Be(1);
             wanted.Records.Should().ContainSingle().Which.MovieFileId.Should().Be(primaryFile.Id);
+            wanted.Records.Single().MovieFile.Id.Should().Be(primaryFile.Id);
+            wanted.Records.Single().QualityProfile.Id.Should().Be(_profile.Id);
             _secondary.Monitored = false;
             Mocker.Resolve<MovieEditionRepository>().SetFields(_secondary, e => e.Monitored);
             Cutoff().TotalRecords.Should().Be(0);

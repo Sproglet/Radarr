@@ -31,8 +31,9 @@ namespace Radarr.Api.V3.Wanted
                             ICustomFormatCalculationService formatCalculator,
                             IConfigService configService,
                             IMapCoversToLocal coverMapper,
-                            IBroadcastSignalRMessage signalRBroadcaster)
-            : base(movieService, movieTranslationService, movieStatisticsService, upgradableSpecification, formatCalculator, configService, coverMapper, signalRBroadcaster)
+                            IBroadcastSignalRMessage signalRBroadcaster,
+                            IMovieEditionContextService editionContexts)
+            : base(movieService, movieTranslationService, movieStatisticsService, upgradableSpecification, formatCalculator, configService, coverMapper, signalRBroadcaster, editionContexts)
         {
             _movieCutoffService = movieCutoffService;
         }

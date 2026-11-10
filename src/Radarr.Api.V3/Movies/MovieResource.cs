@@ -103,14 +103,14 @@ namespace Radarr.Api.V3.Movies
 
     public static class MovieResourceMapper
     {
-        public static MovieResource ToResource(this Movie model, int availDelay, MovieTranslation movieTranslation = null, IUpgradableSpecification upgradableSpecification = null, ICustomFormatCalculationService formatCalculationService = null)
+        public static MovieResource ToResource(this Movie model, int availDelay, MovieTranslation movieTranslation = null, IUpgradableSpecification upgradableSpecification = null, ICustomFormatCalculationService formatCalculationService = null, IMovieEditionContextService editionContexts = null)
         {
             if (model == null)
             {
                 return null;
             }
 
-            var movieFile = model.MovieFile?.ToResource(model, upgradableSpecification, formatCalculationService);
+            var movieFile = model.MovieFile?.ToResource(model, upgradableSpecification, formatCalculationService, editionContexts);
 
             var translatedTitle = movieTranslation?.Title ?? model.Title;
             var translatedOverview = movieTranslation?.Overview ?? model.MovieMetadata.Value.Overview;
@@ -230,9 +230,9 @@ namespace Radarr.Api.V3.Movies
             return movie;
         }
 
-        public static List<MovieResource> ToResource(this IEnumerable<Movie> movies, int availDelay, IUpgradableSpecification upgradableSpecification = null, ICustomFormatCalculationService formatCalculationService = null)
+        public static List<MovieResource> ToResource(this IEnumerable<Movie> movies, int availDelay, IUpgradableSpecification upgradableSpecification = null, ICustomFormatCalculationService formatCalculationService = null, IMovieEditionContextService editionContexts = null)
         {
-            return movies.Select(x => ToResource(x, availDelay, null, upgradableSpecification, formatCalculationService)).ToList();
+            return movies.Select(x => ToResource(x, availDelay, null, upgradableSpecification, formatCalculationService, editionContexts)).ToList();
         }
 
         public static List<Movie> ToModel(this IEnumerable<MovieResource> resources)

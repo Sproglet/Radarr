@@ -96,9 +96,11 @@ namespace NzbDrone.Core.Movies
         }
 
         protected override IEnumerable<Movie> PagedQuery(SqlBuilder builder) =>
-            _database.QueryJoined<Movie, MovieMetadata>(builder, (movie, movieMetadata) =>
+            _database.QueryJoined<Movie, MovieMetadata, QualityProfile, MovieFile>(builder, (movie, movieMetadata, profile, file) =>
             {
                 movie.MovieMetadata = movieMetadata;
+                movie.QualityProfile = profile;
+                movie.MovieFile = file;
                 return movie;
             });
 
@@ -307,7 +309,9 @@ namespace NzbDrone.Core.Movies
                 AND ""Movies"".""MovieFileId"" = 0))")
             .Where<Movie>(m => m.MovieMetadata.Value.Year > 0)
             .GroupBy<Movie>(m => m.Id)
-            .GroupBy<MovieMetadata>(m => m.Id);
+            .GroupBy<MovieMetadata>(m => m.Id)
+            .GroupBy<QualityProfile>(p => p.Id)
+            .GroupBy<MovieFile>(f => f.Id);
 
         public PagingSpec<Movie> MoviesWithoutFiles(PagingSpec<Movie> pagingSpec)
         {
@@ -327,7 +331,9 @@ namespace NzbDrone.Core.Movies
             ) OR (NOT EXISTS (SELECT 1 FROM ""MovieEditions"" e WHERE e.""MovieId"" = ""Movies"".""Id"")
                 AND ""Movies"".""MovieFileId"" != 0 AND {BuildQualityCutoffWhereClause(qualitiesBelowCutoff, _table, "MovieFiles")}))")
             .GroupBy<Movie>(m => m.Id)
-            .GroupBy<MovieMetadata>(m => m.Id);
+            .GroupBy<MovieMetadata>(m => m.Id)
+            .GroupBy<QualityProfile>(p => p.Id)
+            .GroupBy<MovieFile>(f => f.Id);
 
         public PagingSpec<Movie> MoviesWhereCutoffUnmet(PagingSpec<Movie> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff)
         {
