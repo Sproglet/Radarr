@@ -807,9 +807,66 @@ def verify_bulk_file_parents():
     print("PASS: invalid/escaping bulk selections reject before deletion; valid deletion removes only both selected parents' files/subtitles, preserving the unselected primary through restart", flush=True)
 
 
+
+def verify_file_profiles(secondary_profile):
+    before = p.snapshot()
+    history = p.rows("History")
+    default = p.api("api/v3/qualityprofile/1")
+    p.api("api/v3/qualityprofile/1", dict(default, cutoff=1), "PUT")
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=2', (secondary_profile,))
+        for file in p.rows("MovieFiles"):
+            quality = json.loads(file["Quality"])
+            quality["quality"] = 1
+            db.execute('UPDATE "MovieFiles" SET "Quality"=? WHERE "Id"=?', (json.dumps(quality), file["Id"]))
+    p.start()
+
+    def validate(resources):
+        assert len(resources) == 2, resources
+        for resource in resources:
+            secondary = resource["movieEditionId"] == 2
+            assert resource["editionContextValid"] and resource["customFormatScore"] == (77 if secondary else 11), resource
+            assert resource["qualityProfileId"] == (secondary_profile if secondary else 1), resource
+            assert resource["qualityCutoffNotMet"] == secondary, resource
+            assert resource["movieEditionName"] == ("Directors Cut 3D" if secondary else "Theatrical IMAX"), resource
+
+    files = p.api("api/v3/moviefile?movieId=1")
+    validate(files)
+    validate([p.api("api/v3/moviefile/" + str(file["id"])) for file in files])
+    validate(p.api("api/v3/moviefile/bulk", [{"id": file["id"], "releaseGroup": "SyntheticFileProfileGroup"} for file in files], "PUT"))
+    validate(p.api("api/v3/moviefile/editor", {"movieFileIds": [file["id"] for file in files], "releaseGroup": "SyntheticLegacyProfileGroup"}, "PUT"))
+    configure_browser_auth()
+    subprocess.run(["node", "/src/docs/development/verify-edition-file-profiles-browser.cjs", "valid"], check=True)
+    for owner, profile in [(None, secondary_profile), (999999, secondary_profile), (2, 999999)]:
+        p.stop()
+        with p.database() as db:
+            db.execute('UPDATE "MovieFiles" SET "MovieEditionId"=? WHERE "Id"=?', (owner, before[2][0]))
+            db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=2', (profile,))
+        p.start()
+        records = p.api("api/v3/moviefile?movieId=1")
+        invalid = next(file for file in records if file["id"] == before[2][0])
+        assert invalid["editionContextValid"] is False and invalid["editionContextError"], invalid
+        assert invalid.get("customFormatScore") is None and invalid.get("qualityProfileId") is None and not invalid["customFormats"], invalid
+        assert next(file for file in records if file["id"] == before[1][0])["customFormatScore"] == 11
+        primary_resource = p.api("api/v3/movie/1")
+        assert primary_resource["qualityProfileId"] == 1 and primary_resource["movieFileId"] == before[1][0], primary_resource
+        if profile == 999999:
+            subprocess.run(["node", "/src/docs/development/verify-edition-file-profiles-browser.cjs", "invalid"], check=True)
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieFiles" SET "MovieEditionId"=2 WHERE "Id"=?', (before[2][0],))
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=2', (secondary_profile,))
+    p.start()
+    validate(p.api("api/v3/moviefile?movieId=1"))
+    assert p.snapshot() == before and p.rows("History") == history
+    print("PASS: file list/detail/bulk/legacy resources score 11/77 and evaluate cutoff using the actual edition profile without changing primary policy", flush=True)
+    print("PASS: unassigned/foreign-target/missing-profile files expose an explicit invalid context, omit score/profile and never borrow the default; file/subtitle bytes and history survive restart", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -829,6 +886,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "file-profiles":
+        verify_file_profiles(secondary["id"])
+        return
     if scenario == "creation-ui":
         verify_creation_browser(secondary["id"])
         return

@@ -36,6 +36,8 @@ interface MovieFileRowProps
     | 'quality'
     | 'customFormats'
     | 'customFormatScore'
+    | 'editionContextValid'
+    | 'editionContextError'
     | 'qualityCutoffNotMet'
     | 'mediaInfo'
     | 'dateAdded'
@@ -55,6 +57,8 @@ function MovieFileEditorRow(props: MovieFileRowProps) {
     qualityCutoffNotMet,
     customFormats = [],
     customFormatScore = 0,
+    editionContextValid,
+    editionContextError,
     indexerFlags,
     languages,
     dateAdded,
@@ -120,11 +124,21 @@ function MovieFileEditorRow(props: MovieFileRowProps) {
           return (
             <TableRowCell key={name} className={styles.customFormatScore}>
               <Tooltip
-                anchor={formatCustomFormatScore(
-                  customFormatScore,
-                  customFormats.length
-                )}
-                tooltip={<MovieFormats formats={customFormats} />}
+                anchor={
+                  editionContextValid === false
+                    ? translate('Unknown')
+                    : formatCustomFormatScore(
+                        customFormatScore,
+                        customFormats.length
+                      )
+                }
+                tooltip={
+                  editionContextValid === false ? (
+                    editionContextError
+                  ) : (
+                    <MovieFormats formats={customFormats} />
+                  )
+                }
                 position={tooltipPositions.LEFT}
               />
             </TableRowCell>

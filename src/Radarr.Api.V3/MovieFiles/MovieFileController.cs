@@ -34,13 +34,15 @@ namespace Radarr.Api.V3.MovieFiles
         private readonly IMovieService _movieService;
         private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly IUpgradableSpecification _upgradableSpecification;
+        private readonly IMovieEditionContextService _editionContexts;
 
         public MovieFileController(IBroadcastSignalRMessage signalRBroadcaster,
                                IMediaFileService mediaFileService,
                                IDeleteMediaFiles mediaFileDeletionService,
                                IMovieService movieService,
                                ICustomFormatCalculationService formatCalculator,
-                               IUpgradableSpecification upgradableSpecification)
+                               IUpgradableSpecification upgradableSpecification,
+                               IMovieEditionContextService editionContexts)
             : base(signalRBroadcaster)
         {
             _mediaFileService = mediaFileService;
@@ -48,6 +50,7 @@ namespace Radarr.Api.V3.MovieFiles
             _movieService = movieService;
             _formatCalculator = formatCalculator;
             _upgradableSpecification = upgradableSpecification;
+            _editionContexts = editionContexts;
         }
 
         protected override MovieFileResource GetResourceById(int id)
@@ -55,7 +58,7 @@ namespace Radarr.Api.V3.MovieFiles
             var movieFile = _mediaFileService.GetMovie(id);
             var movie = _movieService.GetMovie(movieFile.MovieId);
 
-            var resource = movieFile.ToResource(movie, _upgradableSpecification, _formatCalculator);
+            var resource = movieFile.ToResource(movie, _upgradableSpecification, _formatCalculator, _editionContexts);
 
             return resource;
         }
@@ -255,7 +258,7 @@ namespace Radarr.Api.V3.MovieFiles
         private List<MovieFileResource> MapFiles(List<MovieFile> files, Dictionary<int, Movie> parents = null)
         {
             parents ??= Parents(files);
-            return files.ConvertAll(file => file.ToResource(parents[file.MovieId], _upgradableSpecification, _formatCalculator));
+            return files.ConvertAll(file => file.ToResource(parents[file.MovieId], _upgradableSpecification, _formatCalculator, _editionContexts));
         }
 
         [NonAction]
