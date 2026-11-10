@@ -109,6 +109,10 @@ const LINKS: SidebarItem[] = [
         title: () => translate('CutoffUnmet'),
         to: '/wanted/cutoffunmet',
       },
+      {
+        title: () => translate('Editions'),
+        to: '/wanted/editions',
+      },
     ],
   },
 

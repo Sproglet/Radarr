@@ -1,0 +1,23 @@
+.controls {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 20px;
+
+  margin-bottom: 20px;
+}
+
+.controls > label {
+  display: grid;
+  gap: 6px;
+
+  min-width: 180px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  padding-top: 12px;
+}

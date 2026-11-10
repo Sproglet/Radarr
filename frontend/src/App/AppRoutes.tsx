@@ -33,6 +33,7 @@ import Tasks from 'System/Tasks/Tasks';
 import Updates from 'System/Updates/Updates';
 import getPathWithUrlBase from 'Utilities/getPathWithUrlBase';
 import CutoffUnmet from 'Wanted/CutoffUnmet/CutoffUnmet';
+import EditionWanted from 'Wanted/EditionWanted';
 import Missing from 'Wanted/Missing/Missing';
 
 function RedirectWithUrlBase() {
@@ -88,6 +89,8 @@ function AppRoutes() {
       {/*
         Wanted
       */}
+
+      <Route path="/wanted/editions" component={EditionWanted} />
 
       <Route path="/wanted/missing" component={Missing} />
 

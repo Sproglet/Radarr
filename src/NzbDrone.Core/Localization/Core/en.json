@@ -1,4 +1,12 @@
 {
+  "EditionWanted": "Wanted Editions",
+  "EditionWantedHelpText": "Monitoring requires both the movie and edition. Automatic multi-edition downloads remain disabled.",
+  "EditionWantedCutoffHelpText": "Cutoff results compare quality only; custom-format cutoff is not included.",
+  "EffectivelyMonitored": "Effectively Monitored",
+  "EffectivelyUnmonitored": "Monitoring Disabled",
+  "EditionWantedPrevious": "Previous Page",
+  "EditionWantedNext": "Next Page",
+  "EditionWantedPageSummary": "Editions: {count}. Page {page} of {pages}",
   "SelectPrimaryEdition": "Make Primary",
   "PrimaryEditionConfirm": "Use “{edition}” as the primary edition? Legacy file status will follow this target, including a missing file. Other copies, profiles, labels and monitoring preferences stay in place.",
   "PrimaryEditionHelpText": "The primary edition supplies the file and search date shown to legacy clients. Changing it does not move files or change the movie default profile or edition preferences.",

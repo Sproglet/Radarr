@@ -1148,7 +1148,7 @@ def verify_file_history(edition_profile):
     print("PASS: secondary rename/delete/refill preserves the primary video/subtitle bytes and IDs; deleted-target history remains scored and assigned across missing/refill/restart", flush=True)
 
 
-def verify_edition_wanted(edition_profile):
+def verify_edition_wanted(edition_profile, browser=False):
     before = p.snapshot()
     profile = p.api("api/v3/qualityprofile/1")
     profile.update(cutoff=1, cutoffFormatScore=100)
@@ -1241,13 +1241,31 @@ def verify_edition_wanted(edition_profile):
     page("cutoff", [2], False)
     assert p.snapshot() == before and p.rows("History") == original["History"] and not p.rows("DownloadHistory")
     assert not any(command["name"] == "MoviesSearch" for command in p.api("api/v3/command"))
+    if browser:
+        additional = [p.api("api/v3/movieedition", {"movieId": 1, "name": "Synthetic Wanted Extra " + str(number).zfill(2),
+            "attributes": {"branding": "Synthetic Wanted Extra " + str(number).zfill(2)}}) for number in range(1, 10)]
+        p.stop()
+        with p.database() as db:
+            db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=999999 WHERE "Id"=?', (additional[0]["id"],))
+            db.execute('UPDATE "MovieEditions" SET "MovieFileId"=? WHERE "Id"=?', (before[1][0], additional[1]["id"]))
+        p.start()
+        configure_browser_auth()
+        tables = {table: p.rows(table) for table in ["Movies", "MovieEditions", "MovieFiles", "History", "DownloadHistory"]}
+        subprocess.run(["node", "/src/docs/development/verify-edition-wanted-browser.cjs"], check=True)
+        assert tables == {table: p.rows(table) for table in tables}
+        p.stop()
+        with p.database() as db:
+            db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=1 WHERE "Id"=?', (additional[0]["id"],))
+            db.execute('UPDATE "MovieEditions" SET "MovieFileId"=NULL WHERE "Id"=?', (additional[1]["id"],))
+        p.start()
+        assert p.snapshot() == before
     print("PASS: edition wanted endpoints return separate combined targets, independent quality profiles/search dates, stable paging and effective-monitoring complements", flush=True)
     print("PASS: invalid paging rejects, invalid ownership/profiles remain diagnostic, legacy wanted stays movie-based and all media/history survive restart without acquisition", flush=True)
 
 
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history", "edition-wanted"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history", "edition-wanted", "edition-wanted-ui"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -1267,6 +1285,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "edition-wanted-ui":
+        verify_edition_wanted(secondary["id"], True)
+        return
     if scenario == "edition-wanted":
         verify_edition_wanted(secondary["id"])
         return
