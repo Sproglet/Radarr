@@ -697,9 +697,45 @@ def verify_creation(secondary_profile):
     print("PASS: API-created Director's Cut / 3D and Theatrical / 3D / IMAX import, scan, rename and restart; upgrades preserve every other edition's video/subtitle bytes and IDs", flush=True)
 
 
+
+def verify_creation_browser(secondary_profile):
+    before = p.snapshot()
+    configure_browser_auth()
+    sources = [p.source("Theatrical.3D.IMAX.SyntheticBrowserGroup", "purple"), p.source("Directors.Cut.3D.SyntheticBrowserGroup", "pink")]
+    result = subprocess.run(["node", "/src/docs/development/verify-edition-management-browser.cjs", str(secondary_profile), *map(str, sources)],
+                            text=True, capture_output=True)
+    print(result.stdout, end="", flush=True)
+    print(result.stderr, end="", file=sys.stderr, flush=True)
+    result.check_returncode()
+    created = json.loads(next(line.removeprefix("CREATED_EDITIONS=") for line in result.stdout.splitlines() if line.startswith("CREATED_EDITIONS=")))
+
+    def capture():
+        return {file["MovieEditionId"]: (file["Id"], file["RelativePath"], hashlib.sha256((p.MOVIE / file["RelativePath"]).read_bytes()).hexdigest(),
+                    extra["Id"], extra["RelativePath"], (p.MOVIE / extra["RelativePath"]).read_text())
+                for file in p.rows("MovieFiles") for extra in p.rows("SubtitleFiles") if extra["MovieFileId"] == file["Id"]}
+
+    current = capture()
+    assert len(current) == 4 and all(current[eid] == value for eid, value in before.items())
+    for edition in created:
+        previous = capture()
+        p.manual(edition["id"], "SyntheticBrowserUpgrade" + str(edition["id"]), "yellow")
+        current = capture()
+        assert current[edition["id"]][0] != previous[edition["id"]][0]
+        assert all(current[eid] == previous[eid] for eid in current if eid != edition["id"])
+        p.command("RescanMovie", movieId=1)
+        p.command("RenameMovie", movieIds=[1])
+        p.stop()
+        p.start()
+        assert capture() == current
+        saved = p.api("api/v3/movieedition/" + str(edition["id"]))
+        assert saved["editionKey"] == edition["editionKey"] and saved["attributes"] == edition["attributes"] and not saved["monitored"]
+    assert not p.rows("DownloadHistory")
+    print("PASS: both browser-created combined editions upgrade independently and survive scan/rename/restart, preserving all other videos/subtitles and stable keys/labels", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -716,6 +752,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "creation-ui":
+        verify_creation_browser(secondary["id"])
+        return
     if scenario == "creation":
         verify_creation(secondary["id"])
         return
