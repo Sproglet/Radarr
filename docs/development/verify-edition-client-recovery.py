@@ -1148,9 +1148,106 @@ def verify_file_history(edition_profile):
     print("PASS: secondary rename/delete/refill preserves the primary video/subtitle bytes and IDs; deleted-target history remains scored and assigned across missing/refill/restart", flush=True)
 
 
+def verify_edition_wanted(edition_profile):
+    before = p.snapshot()
+    profile = p.api("api/v3/qualityprofile/1")
+    profile.update(cutoff=1, cutoffFormatScore=100)
+    p.api("api/v3/qualityprofile/1", profile, "PUT")
+    first = p.api("api/v3/movieedition", {"movieId": 1, "name": "Synthetic Missing Collector 3D IMAX",
+        "attributes": {"stereoscopic": "3d", "framing": "imax", "branding": "Synthetic Missing Collector"}})
+    second = p.api("api/v3/movieedition", {"movieId": 1, "name": "Synthetic Missing Directors 3D",
+        "qualityProfileId": edition_profile, "attributes": {"cut": "directors-cut", "stereoscopic": "3d", "branding": "Synthetic Missing Alternate"}})
+    ids = [first["id"], second["id"]]
+    p.stop()
+    quality = json.dumps({"quality": 1, "revision": {"version": 1, "real": 0, "isRepack": False}})
+    with p.database() as db:
+        db.execute('UPDATE "Movies" SET "Monitored"=TRUE WHERE "Id"=1')
+        db.execute('UPDATE "MovieEditions" SET "Monitored"=TRUE WHERE "MovieId"=1')
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=2', (edition_profile,))
+        db.execute('UPDATE "MovieEditions" SET "LastSearchTime"=? WHERE "Id"=?', ("2026-11-10T09:00:00Z", ids[0]))
+        db.execute('UPDATE "MovieFiles" SET "Quality"=? WHERE "MovieId"=1', (quality,))
+    p.start()
+
+    def page(kind, expected, monitored=True, extra=""):
+        resource = p.api("api/v3/wanted/edition" + kind + "?page=1&pageSize=100&monitored=" + str(monitored).lower() + extra)
+        assert resource["totalRecords"] == len(expected)
+        assert [row["id"] for row in resource["records"]] == expected, resource
+        for row in resource["records"]:
+            assert row["movieId"] == 1 and row["title"] == "Synthetic Lunar Voyage" and row["year"] == 2026 and row["tmdbId"] == -1000001
+            assert row["effectiveMonitored"] == monitored
+        return resource
+
+    original = {table: p.rows(table) for table in ["Movies", "MovieEditions", "MovieFiles", "History", "DownloadHistory"]}
+    missing = page("missing", ids)
+    assert missing["records"][0]["attributes"] == {"cut": "theatrical", "stereoscopic": "3d", "framing": "imax", "branding": "Synthetic Missing Collector"}
+    assert missing["records"][1]["attributes"]["cut"] == "directors-cut"
+    assert all(row["state"] == "missing" and not row.get("movieFileId") for row in missing["records"])
+    assert missing["records"][0]["lastSearchTime"].startswith("2026-11-10T09:00:00")
+    cutoff = page("cutoff", [2])
+    assert cutoff["records"][0]["qualityProfileId"] == edition_profile
+    assert cutoff["records"][0]["movieFileId"] == before[2][0] and cutoff["records"][0]["state"] == "present"
+    assert cutoff["records"][0]["quality"]["quality"]["id"] == 1
+    page("missing", [], False)
+    page("cutoff", [], False)
+    for kind in ["missing", "cutoff"]:
+        for query in ["page=0", "page=-1", "pageSize=0", "pageSize=101", "sortDirection=999"]:
+            try:
+                original_api("api/v3/wanted/edition" + kind + "?" + query)
+            except urllib.error.HTTPError as error:
+                assert error.code == 400, (query, error.code, error.read().decode())
+            else:
+                raise AssertionError("Invalid edition wanted paging must reject: " + query)
+    for index in [1, 2, 3]:
+        result = p.api("api/v3/wanted/editionmissing?page=" + str(index) + "&pageSize=1")
+        assert result["totalRecords"] == 2
+        assert [row["id"] for row in result["records"]] == (ids[index - 1:index] if index < 3 else [])
+    fallback = page("missing", ids, extra="&sortKey=unsupportedSyntheticSort")
+    assert fallback["sortKey"] == "title"
+    page("missing", ids, extra="&sortKey=lastSearchTime&sortDirection=ascending")
+    for kind in ["missing", "cutoff"]:
+        legacy = p.api("api/v3/wanted/" + kind + "?page=1&pageSize=100")
+        assert legacy["totalRecords"] == 1 and legacy["records"][0]["id"] == 1
+        assert legacy["records"][0]["movieFileId"] == before[1][0]
+    assert original == {table: p.rows(table) for table in original}
+    assert p.snapshot() == before
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "Monitored"=FALSE WHERE "Id" IN (?,2)', (ids[1],))
+    p.start()
+    page("missing", [ids[0]])
+    page("missing", [ids[1]], False)
+    page("cutoff", [])
+    page("cutoff", [2], False)
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "Movies" SET "Monitored"=FALSE WHERE "Id"=1')
+        # A corrupt same-parent pointer cannot turn an empty target into an available file.
+        db.execute('UPDATE "MovieEditions" SET "MovieFileId"=? WHERE "Id"=?', (before[1][0], ids[0]))
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=999999 WHERE "Id"=?', (ids[1],))
+    p.start()
+    page("missing", [])
+    invalid = page("missing", ids, False)
+    assert all(row["state"] == "invalid" and row["rejectionReason"] for row in invalid["records"])
+    assert not invalid["records"][0].get("relativePath") and invalid["records"][0]["movieFileId"] == before[1][0]
+    page("cutoff", [])
+    page("cutoff", [2], False)
+    # Restore deliberate bad fixture links before the strict two-file lifecycle check.
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "MovieFileId"=NULL WHERE "Id"=?', (ids[0],))
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=?', (edition_profile, ids[1]))
+    p.start()
+    page("missing", ids, False)
+    page("cutoff", [2], False)
+    assert p.snapshot() == before and p.rows("History") == original["History"] and not p.rows("DownloadHistory")
+    assert not any(command["name"] == "MoviesSearch" for command in p.api("api/v3/command"))
+    print("PASS: edition wanted endpoints return separate combined targets, independent quality profiles/search dates, stable paging and effective-monitoring complements", flush=True)
+    print("PASS: invalid paging rejects, invalid ownership/profiles remain diagnostic, legacy wanted stays movie-based and all media/history survive restart without acquisition", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history", "edition-wanted"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -1170,6 +1267,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "edition-wanted":
+        verify_edition_wanted(secondary["id"])
+        return
     if scenario == "file-history":
         verify_file_history(secondary["id"])
         return

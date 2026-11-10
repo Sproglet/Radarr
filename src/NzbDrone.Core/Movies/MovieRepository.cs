@@ -354,13 +354,7 @@ namespace NzbDrone.Core.Movies
 
         private string BuildQualityCutoffWhereClause(List<QualitiesBelowCutoff> qualitiesBelowCutoff, string profileTable, string fileTable)
         {
-            var quality = _database.DatabaseType == DatabaseType.SQLite
-                ? $"JSON_EXTRACT(\"{fileTable}\".\"Quality\", '$.quality')"
-                : $"CAST(\"{fileTable}\".\"Quality\"::json->>'quality' AS INTEGER)";
-            // Only typed integer profile/quality IDs enter this predicate; names and release text are never SQL.
-            var clauses = qualitiesBelowCutoff.SelectMany(profile => profile.QualityIds.Select(id =>
-                $"(\"{profileTable}\".\"QualityProfileId\" = {profile.ProfileId} AND {quality} = {id})")).ToList();
-            return clauses.Count == 0 ? "1 = 0" : "(" + string.Join(" OR ", clauses) + ")";
+            return QualityCutoffSql.Where(_database.DatabaseType, qualitiesBelowCutoff, profileTable, fileTable);
         }
 
         public Movie FindByPath(string path)
