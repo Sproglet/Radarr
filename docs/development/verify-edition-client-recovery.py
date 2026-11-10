@@ -1,4 +1,4 @@
-"""Offline SQLite process-restart and HTTP queue regression with synthetic SAB APIs.
+"""Offline SQLite/PostgreSQL process-restart and HTTP queue regression with synthetic SAB APIs.
 
 Run only inside a disposable SDK container with this checkout mounted at /src,
 a complete net10.0 application build, Python/ffmpeg, and no external network.
@@ -6,13 +6,13 @@ No real client is contacted and acquisition requests to the fake APIs fail.
 The manual-ui scenario also requires a built UI copied into the application UI
 folder, Node, Playwright Core at /src/_temp/edition-browser-tools and its bundled
 headless Chromium. Install test tools before disconnecting external networking.
+Append --postgres to a scenario to use unique disposable main/log databases on
+the dedicated radarr-edition-postgres alias (python3-psycopg2 required).
 """
 
 import importlib.util
 import json
 from pathlib import Path
-import shutil
-import sqlite3
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -106,26 +106,26 @@ class SyntheticSab:
 
 def seed(clients, secondary_profile):
     """Only seed the unique temporary configuration, while Radarr is stopped."""
-    with sqlite3.connect(p.CONFIG / "radarr.db") as db:
-        db.execute("UPDATE MovieEditions SET QualityProfileId=? WHERE Id=2", (secondary_profile,))
+    with p.database() as db:
+        db.execute("""UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=2""", (secondary_profile,))
         for client, edition, label in zip(clients, [1, 2], ["Theatrical.IMAX", "Directors.Cut.3D"]):
             settings = {"host": "127.0.0.1", "port": client.port, "apiKey": "synthetic-api-key", "movieCategory": "movies"}
-            db.execute('''INSERT INTO DownloadClients
-                (Id,Enable,Name,Implementation,Settings,ConfigContract,Priority,RemoveCompletedDownloads,RemoveFailedDownloads,Tags)
-                VALUES (?,1,?,'Sabnzbd',?,'SabnzbdSettings',1,0,0,'[]')''',
+            db.execute("""INSERT INTO "DownloadClients"
+                ("Id","Enable","Name","Implementation","Settings","ConfigContract","Priority","RemoveCompletedDownloads","RemoveFailedDownloads","Tags")
+                VALUES (?,TRUE,?,'Sabnzbd',?,'SabnzbdSettings',1,FALSE,FALSE,'[]')""",
                 (client.client_id, "Synthetic SAB " + str(client.number), json.dumps(settings)))
             title = "Synthetic.Lunar.Voyage.2026." + label + ".1080p.BluRay-SyntheticGroup"
-            edition_row = db.execute("SELECT Name,RuleRevision FROM MovieEditions WHERE Id=?", (edition,)).fetchone()
+            edition_row = db.execute("""SELECT "Name","RuleRevision" FROM "MovieEditions" WHERE "Id"=?""", (edition,)).fetchone()
             data = {"downloadClientId": str(client.client_id), "movieEditionName": edition_row[0], "indexer": "Synthetic Indexer",
                     "publishedDate": "2026-11-09T00:00:00Z", "size": "104857600", "protocol": "1", "releaseSource": "Rss"}
             release = {"title": title, "guid": "synthetic-guid-" + str(edition), "indexer": "Synthetic Indexer", "indexerId": 77,
                        "size": 104857600, "downloadProtocol": "usenet", "publishDate": "2026-11-09T00:00:00Z"}
             quality = json.dumps({"quality": 7, "revision": {"version": 1, "real": 0, "isRepack": False}})
-            db.execute('''INSERT INTO History (MovieId,MovieEditionId,EditionRuleRevision,SourceTitle,Quality,Date,EventType,Data,Languages,DownloadId)
-                VALUES (1,?,?,?,?,?,1,?,'[1]',?)''',
+            db.execute("""INSERT INTO "History" ("MovieId","MovieEditionId","EditionRuleRevision","SourceTitle","Quality","Date","EventType","Data","Languages","DownloadId")
+                VALUES (1,?,?,?,?,?,1,?,'[1]',?)""",
                 (edition, edition_row[1], title, quality, "2026-11-09T00:00:00Z", json.dumps(data), SHARED))
-            db.execute('''INSERT INTO DownloadHistory (MovieId,MovieEditionId,EditionRuleRevision,SourceTitle,Date,EventType,DownloadId,Protocol,IndexerId,DownloadClientId,Release,Data)
-                VALUES (1,?,?,?,'2026-11-09T00:00:00Z',1,?,1,77,?,?,?)''',
+            db.execute("""INSERT INTO "DownloadHistory" ("MovieId","MovieEditionId","EditionRuleRevision","SourceTitle","Date","EventType","DownloadId","Protocol","IndexerId","DownloadClientId","Release","Data")
+                VALUES (1,?,?,?,'2026-11-09T00:00:00Z',1,?,1,77,?,?,?)""",
                 (edition, edition_row[1], title, SHARED, client.client_id, json.dumps(release), json.dumps(data)))
 
 
@@ -313,11 +313,11 @@ def verify_edition_reads():
     profile["name"] = "Synthetic Edition Review Profile"
     secondary = p.api("api/v3/qualityprofile", profile, "POST")
     p.stop()
-    with sqlite3.connect(p.CONFIG / "radarr.db") as db:
-        db.execute("UPDATE MovieEditions SET Monitored=1 WHERE Id=1")
-        db.execute("UPDATE MovieEditions SET QualityProfileId=? WHERE Id=2", (secondary["id"],))
-        db.execute("""INSERT INTO MovieEditions (Id,MovieId,EditionKey,Name,Monitored,QualityProfileId,Attributes,MatchRules)
-            VALUES (3,1,'synthetic-collector','Synthetic Collector',1,1,?,?)""",
+    with p.database() as db:
+        db.execute("""UPDATE "MovieEditions" SET "Monitored"=TRUE WHERE "Id"=1""")
+        db.execute("""UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=2""", (secondary["id"],))
+        db.execute("""INSERT INTO "MovieEditions" ("Id","MovieId","EditionKey","Name","Monitored","QualityProfileId","Attributes","MatchRules")
+            VALUES (3,1,'synthetic-collector','Synthetic Collector',TRUE,1,?,?)""",
             (json.dumps({"cut": "theatrical", "branding": "synthetic-collector", "custom-label": "Synthetic Open Label"}), json.dumps(["SyntheticExclusiveGroup$"])))
     p.start()
     records = p.api("api/v3/movieedition?movieId=1")
@@ -327,9 +327,9 @@ def verify_edition_reads():
     assert missing["state"] == "missing" and missing.get("movieFileId") is None and not missing["effectiveMonitored"], missing
     assert missing["attributes"]["custom-label"] == "Synthetic Open Label" and missing["matchRules"] == ["SyntheticExclusiveGroup$"], missing
     p.stop()
-    with sqlite3.connect(p.CONFIG / "radarr.db") as db:
-        db.execute("UPDATE Movies SET Monitored=1 WHERE Id=1")
-        db.execute("UPDATE MovieEditions SET QualityProfileId=999999 WHERE Id=2")
+    with p.database() as db:
+        db.execute("""UPDATE "Movies" SET "Monitored"=TRUE WHERE "Id"=1""")
+        db.execute("""UPDATE "MovieEditions" SET "QualityProfileId"=999999 WHERE "Id"=2""")
     p.start()
     records = p.api("api/v3/movieedition?movieId=1")
     assert next(r for r in records if r["id"] == 1)["effectiveMonitored"], records
@@ -338,10 +338,10 @@ def verify_edition_reads():
     assert next(r for r in records if r["id"] == 1)["state"] == "present", records
     assert next(e for e in p.rows("MovieEditions") if e["Id"] == 2)["QualityProfileId"] == 999999
     p.stop()
-    with sqlite3.connect(p.CONFIG / "radarr.db") as db:
-        db.execute("UPDATE Movies SET Monitored=0 WHERE Id=1")
-        db.execute("UPDATE MovieEditions SET Monitored=0,QualityProfileId=1 WHERE Id IN (1,2)")
-        db.execute("DELETE FROM MovieEditions WHERE Id=3")
+    with p.database() as db:
+        db.execute("""UPDATE "Movies" SET "Monitored"=FALSE WHERE "Id"=1""")
+        db.execute("""UPDATE "MovieEditions" SET "Monitored"=FALSE,"QualityProfileId"=1 WHERE "Id" IN (1,2)""")
+        db.execute("""DELETE FROM "MovieEditions" WHERE "Id"=3""")
     p.start()
     assert p.snapshot() == before
     print("PASS: read-only edition API exposes owned files, combined/custom labels, independent profiles and monitoring; invalid/missing targets stay explicit without mutation", flush=True)
@@ -352,14 +352,14 @@ def verify_selector_imports(secondary_profile):
     configure_browser_auth()
     before = p.snapshot()
     p.stop()
-    with sqlite3.connect(p.CONFIG / "radarr.db") as db:
-        db.execute("UPDATE MovieEditions SET QualityProfileId=? WHERE Id=2", (secondary_profile,))
-        db.execute("""INSERT INTO MovieEditions (Id,MovieId,EditionKey,Name,Monitored,QualityProfileId,Attributes)
-            VALUES (3,1,'synthetic-invalid','Synthetic Invalid Target',0,999999,'{}')""")
+    with p.database() as db:
+        db.execute("""UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=2""", (secondary_profile,))
+        db.execute("""INSERT INTO "MovieEditions" ("Id","MovieId","EditionKey","Name","Monitored","QualityProfileId","Attributes")
+            VALUES (3,1,'synthetic-invalid','Synthetic Invalid Target',FALSE,999999,'{}')""")
         for file in p.rows("MovieFiles"):
             quality = json.loads(file["Quality"])
             quality["quality"] = 1
-            db.execute("UPDATE MovieFiles SET Quality=? WHERE Id=?", (json.dumps(quality), file["Id"]))
+            db.execute("""UPDATE "MovieFiles" SET "Quality"=? WHERE "Id"=?""", (json.dumps(quality), file["Id"]))
     p.start()
     for edition, marker, colour in [(1, "IMAX.SyntheticSelector", "yellow"), (2, "Directors.Cut.3D.SyntheticSelector", "purple")]:
         path = p.source(marker, colour)
@@ -397,6 +397,10 @@ def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
     if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
+    if sys.argv[2:] == ["--postgres"]:
+        p.DATABASE.enable_postgres()
+    elif sys.argv[2:]:
+        raise ValueError("Only --postgres is supported after the scenario")
     p.run()
     if scenario == "edition-read":
         verify_edition_reads()
@@ -411,19 +415,19 @@ def run():
     SERVERS.extend(clients)
     seed(clients, secondary["id"])
     if scenario in ("completed", "manual-ui"):
-        with sqlite3.connect(p.CONFIG / "radarr.db") as db:
+        with p.database() as db:
             for file in p.rows("MovieFiles"):
                 quality = json.loads(file["Quality"])
                 quality["quality"] = 1
-                db.execute("UPDATE MovieFiles SET Quality=? WHERE Id=?", (json.dumps(quality), file["Id"]))
+                db.execute("""UPDATE "MovieFiles" SET "Quality"=? WHERE "Id"=?""", (json.dumps(quality), file["Id"]))
     p.start()
     first = queue([1, 2])
     assert first[1]["id"] != first[2]["id"], first
     assert p.snapshot() == before
     print("PASS: real HTTP polling recovers two editions with the same download ID on distinct clients", flush=True)
     p.stop()
-    with sqlite3.connect(p.CONFIG / "radarr.db") as db:
-        db.execute("UPDATE MovieEditions SET MatchRules='[\"UnmatchedSyntheticGroup$\"]',RuleRevision=RuleRevision+1")
+    with p.database() as db:
+        db.execute("""UPDATE "MovieEditions" SET "MatchRules"='["UnmatchedSyntheticGroup$"]',"RuleRevision"="RuleRevision"+1""")
     p.start()
     restored = queue([1, 2])
     assert {k: r["id"] for k, r in restored.items()} == {k: r["id"] for k, r in first.items()}
@@ -486,7 +490,9 @@ if __name__ == "__main__":
         run()
     finally:
         p.stop()
-        for client in SERVERS:
-            client.server.shutdown()
-            client.server.server_close()
-        shutil.rmtree(p.ROOT)
+        try:
+            for client in SERVERS:
+                client.server.shutdown()
+                client.server.server_close()
+        finally:
+            p.cleanup()

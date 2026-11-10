@@ -3,15 +3,18 @@
 Requires a built /src/_output/net10.0 application, Python 3, ffmpeg and ffprobe.
 Seeds synthetic movie/edition definitions while Radarr is stopped (edition CRUD
 is a later phase); all file handling is exercised through the running API.
+Pass --postgres to use the dedicated radarr-edition-postgres Docker alias with
+python3-psycopg2 installed; each run creates and drops its own main/log databases.
 """
 
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
-import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -26,6 +29,20 @@ LIBRARY = ROOT / "movies"
 MOVIE = LIBRARY / "Synthetic Lunar Voyage (2026)"
 PROCESS = None
 LOG = None
+sys.dont_write_bytecode = True
+_database_spec = importlib.util.spec_from_file_location("edition_test_database", Path(__file__).with_name("edition-test-database.py"))
+_database_module = importlib.util.module_from_spec(_database_spec)
+_database_spec.loader.exec_module(_database_module)
+DATABASE = _database_module.TestDatabase(CONFIG, lambda: PROCESS is None or PROCESS.poll() is not None)
+database = DATABASE.connect
+
+
+def cleanup():
+    stop()
+    try:
+        DATABASE.cleanup()
+    finally:
+        shutil.rmtree(ROOT)
 
 
 def api(path, body=None, method=None):
@@ -44,6 +61,7 @@ def start():
     global PROCESS, LOG
     LOG = open(RESULTS / "phase3-runtime.log", "a")
     env = {k: v for k, v in os.environ.items() if not k.lower().startswith("radarr__")}
+    env.update(DATABASE.environment())
     PROCESS = subprocess.Popen(
         ["dotnet", str(APP / "Radarr.dll"), "--nobrowser", "--data=" + str(CONFIG)],
         cwd=APP, env=env, stdout=LOG, stderr=subprocess.STDOUT,
@@ -52,7 +70,11 @@ def start():
         if PROCESS.poll() is not None:
             raise RuntimeError("Radarr exited; see phase3-runtime.log")
         try:
-            api("api/v3/system/status")
+            status = api("api/v3/system/status")
+            expected = "postgresql" if DATABASE.postgres else "sqlite"
+            assert status["databaseType"].casefold() == expected, status
+            if DATABASE.postgres:
+                assert not (CONFIG / "radarr.db").exists(), "PostgreSQL smoke test must not use a SQLite main database"
             return
         except (OSError, ValueError):
             time.sleep(1)
@@ -87,9 +109,7 @@ def command(name, **fields):
 
 
 def rows(table):
-    with sqlite3.connect("file:" + str(CONFIG / "radarr.db") + "?mode=ro", uri=True) as db:
-        db.row_factory = sqlite3.Row
-        return [dict(row) for row in db.execute('SELECT * FROM "' + table + '" ORDER BY Id')]
+    return DATABASE.rows(table)
 
 
 def snapshot():
@@ -152,16 +172,17 @@ def run():
         (APP / "ffprobe").symlink_to(shutil.which("ffprobe"))
     start()
     stop()
-    with sqlite3.connect(CONFIG / "radarr.db") as db:
-        db.execute("INSERT INTO MovieMetadata (Id,TmdbId,Images,Title,CleanTitle,OriginalTitle,CleanOriginalTitle,OriginalLanguage,Status,Runtime,Recommendations,Year,Genres,Keywords,Ratings) VALUES (1,-1000001,'[]','Synthetic Lunar Voyage','syntheticlunarvoyage','Synthetic Lunar Voyage','syntheticlunarvoyage',1,3,100,'[]',2026,'[]','[]','{}')")
-        db.execute("INSERT INTO Movies (Id,Path,Monitored,QualityProfileId,MovieFileId,MinimumAvailability,MovieMetadataId,Tags,PrimaryEditionId) VALUES (1,?,0,1,0,3,1,'[]',1)", (str(MOVIE),))
+    with database() as db:
+        db.execute("""INSERT INTO "MovieMetadata" ("Id","TmdbId","Images","Title","CleanTitle","OriginalTitle","CleanOriginalTitle","OriginalLanguage","Status","Runtime","Recommendations","Year","Genres","Keywords","Ratings") VALUES (1,-1000001,'[]','Synthetic Lunar Voyage','syntheticlunarvoyage','Synthetic Lunar Voyage','syntheticlunarvoyage',1,3,100,'[]',2026,'[]','[]','{}')""")
+        db.execute("""INSERT INTO "Movies" ("Id","Path","Monitored","QualityProfileId","MovieFileId","MinimumAvailability","MovieMetadataId","Tags","PrimaryEditionId") VALUES (1,?,FALSE,1,0,3,1,'[]',1)""", (str(MOVIE),))
         for eid, key, name, attrs in [
             (1, "theatrical-imax", "Theatrical IMAX", {"cut": "theatrical", "framing": "imax"}),
             (2, "directors-3d", "Directors Cut 3D", {"cut": "directors-cut", "stereoscopic": "3d"}),
         ]:
-            db.execute("INSERT INTO MovieEditions (Id,MovieId,EditionKey,Name,Monitored,QualityProfileId,Attributes) VALUES (?,1,?,?,0,1,?)", (eid, key, name, json.dumps(attrs)))
+            db.execute("""INSERT INTO "MovieEditions" ("Id","MovieId","EditionKey","Name","Monitored","QualityProfileId","Attributes") VALUES (?,1,?,?,FALSE,1,?)""", (eid, key, name, json.dumps(attrs)))
         for key, value in {"ImportExtraFiles": "True", "ExtraFileExtensions": "srt", "CopyUsingHardlinks": "False", "RecycleBin": str(ROOT / "recycle")}.items():
-            db.execute("INSERT OR REPLACE INTO Config (Key,Value) VALUES (?,?)", (key.lower(), value))
+            db.execute("""DELETE FROM "Config" WHERE "Key"=?""", (key.lower(),))
+            db.execute("""INSERT INTO "Config" ("Key","Value") VALUES (?,?)""", (key.lower(), value))
     start()
     naming = api("api/v3/config/naming")
     naming.update(renameMovies=True, standardMovieFormat="{Movie Title} ({Release Year}) [{Managed Edition}]")
@@ -201,7 +222,10 @@ def run():
 
 if __name__ == "__main__":
     try:
+        if sys.argv[1:] == ["--postgres"]:
+            DATABASE.enable_postgres()
+        elif sys.argv[1:]:
+            raise ValueError("Only --postgres is supported")
         run()
     finally:
-        stop()
-        shutil.rmtree(ROOT)
+        cleanup()
