@@ -19,13 +19,67 @@ namespace Radarr.Api.V3.MovieEditions
         private readonly IMovieEditionRepository _editions;
         private readonly IMovieEditionContextService _contexts;
         private readonly IMovieEditionNamingPreviewService _namingPreview;
+        private readonly IMovieEditionManagementService _management;
 
-        public MovieEditionController(IMovieRepository movies, IMovieEditionRepository editions, IMovieEditionContextService contexts, IMovieEditionNamingPreviewService namingPreview)
+        public MovieEditionController(IMovieRepository movies, IMovieEditionRepository editions, IMovieEditionContextService contexts, IMovieEditionNamingPreviewService namingPreview, IMovieEditionManagementService management)
         {
             _movies = movies;
             _editions = editions;
             _contexts = contexts;
             _namingPreview = namingPreview;
+            _management = management;
+        }
+
+        [HttpGet("{id:int}")]
+        [Produces("application/json")]
+        public Ok<MovieEditionResource> GetEdition(int id)
+        {
+            var edition = _editions.Find(id) ?? throw new NotFoundException("Edition not found.");
+            var movie = _movies.Find(edition.MovieId) ?? throw new NotFoundException("Movie not found.");
+            return TypedResults.Ok(edition.ToResource(movie, _contexts));
+        }
+
+        [HttpPost]
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public Results<Created<MovieEditionResource>, Conflict<object>> Create([FromBody] MovieEditionNamingProposalResource proposal)
+        {
+            try
+            {
+                var edition = _management.Create(ToProposal(proposal));
+                var movie = _movies.Find(edition.MovieId) ?? throw new NotFoundException("Movie not found.");
+                return TypedResults.Created($"{Request.PathBase}/api/v3/movieedition/{edition.Id}", edition.ToResource(movie, _contexts));
+            }
+            catch (ArgumentException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
+            catch (NamingFormatException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
+            catch (ModelNotFoundException ex)
+            {
+                throw new NotFoundException(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return TypedResults.Conflict<object>(new { message = ex.Message });
+            }
+        }
+
+        private static MovieEdition ToProposal(MovieEditionNamingProposalResource proposal)
+        {
+            if (proposal == null || proposal.QualityProfileId <= 0)
+            {
+                throw new BadRequestException("Provide a proposal and a positive profile ID, or omit the profile to use the movie default.");
+            }
+
+            return new MovieEdition
+            {
+                MovieId = proposal.MovieId, Name = proposal.Name, QualityProfileId = proposal.QualityProfileId ?? 0,
+                Attributes = proposal.Attributes, MatchRules = proposal.MatchRules
+            };
         }
 
         [HttpPost("preview")]
@@ -33,18 +87,9 @@ namespace Radarr.Api.V3.MovieEditions
         [Produces("application/json")]
         public Ok<MovieEditionNamingPreview> Preview([FromBody] MovieEditionNamingProposalResource proposal)
         {
-            if (proposal == null || proposal.QualityProfileId <= 0)
-            {
-                throw new BadRequestException("Provide a proposal and a positive profile ID, or omit the profile to use the movie default.");
-            }
-
             try
             {
-                return TypedResults.Ok(_namingPreview.Preview(new MovieEdition
-                {
-                    MovieId = proposal.MovieId, Name = proposal.Name, QualityProfileId = proposal.QualityProfileId ?? 0,
-                    Attributes = proposal.Attributes, MatchRules = proposal.MatchRules
-                }));
+                return TypedResults.Ok(_namingPreview.Preview(ToProposal(proposal)));
             }
             catch (ArgumentException ex)
             {
@@ -80,38 +125,7 @@ namespace Radarr.Api.V3.MovieEditions
                 .OrderByDescending(e => e.Id == movie.PrimaryEditionId)
                 .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase).ThenBy(e => e.Id))
             {
-                var resource = new MovieEditionResource
-                {
-                    Id = edition.Id,
-                    MovieId = edition.MovieId,
-                    EditionKey = edition.EditionKey,
-                    Name = edition.Name,
-                    IsPrimary = edition.Id == movie.PrimaryEditionId,
-                    Monitored = edition.Monitored,
-                    EffectiveMonitored = movie.Monitored && edition.Monitored,
-                    QualityProfileId = edition.QualityProfileId,
-                    MovieFileId = edition.MovieFileId,
-                    LastSearchTime = edition.LastSearchTime,
-                    Attributes = edition.Attributes,
-                    MatchRules = edition.MatchRules,
-                    RuleRevision = edition.RuleRevision
-                };
-
-                try
-                {
-                    var context = _contexts.Resolve(movie, edition.Id);
-                    resource.QualityProfileName = context.QualityProfile.Name;
-                    resource.RelativePath = context.CurrentFile?.RelativePath;
-                    resource.Quality = context.CurrentFile?.Quality;
-                    resource.State = context.CurrentFile == null ? "missing" : "present";
-                }
-                catch (Exception ex) when (ex is InvalidOperationException || ex is ModelNotFoundException)
-                {
-                    resource.State = "invalid";
-                    resource.RejectionReason = ex.Message;
-                }
-
-                resources.Add(resource);
+                resources.Add(edition.ToResource(movie, _contexts));
             }
 
             return TypedResults.Ok(resources);

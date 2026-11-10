@@ -56,6 +56,7 @@ namespace NzbDrone.Core.Download
 
         public async Task DownloadReport(RemoteMovie remoteMovie, int? downloadClientId)
         {
+            using var acquisition = remoteMovie.Movie == null ? null : await MovieEditionAcquisitionGate.AcquireAsync(remoteMovie.Movie.Id);
             if (remoteMovie.EditionRecoveryError != null || remoteMovie.EditionContext != null || (remoteMovie.Movie != null && _editions.GetByMovie(remoteMovie.Movie.Id)?.Count > 1))
             {
                 throw new InvalidOperationException("Multi-edition acquisition is disabled. Import files with explicit edition assignments instead.");
@@ -69,10 +70,13 @@ namespace NzbDrone.Core.Download
                 ? _downloadClientProvider.Get(downloadClientId.Value)
                 : _downloadClientProvider.GetDownloadClient(remoteMovie.Release.DownloadProtocol, remoteMovie.Release.IndexerId, filterBlockedClients, tags);
 
-            await DownloadReport(remoteMovie, downloadClient);
+            var grabbed = await DownloadReport(remoteMovie, downloadClient);
+            // Client submission is complete. Release before notifications/scripts, which may call the API.
+            acquisition?.Dispose();
+            _eventAggregator.PublishEvent(grabbed);
         }
 
-        private async Task DownloadReport(RemoteMovie remoteMovie, IDownloadClient downloadClient)
+        private async Task<MovieGrabbedEvent> DownloadReport(RemoteMovie remoteMovie, IDownloadClient downloadClient)
         {
             Ensure.That(remoteMovie.Movie, () => remoteMovie.Movie).IsNotNull();
 
@@ -147,7 +151,7 @@ namespace NzbDrone.Core.Download
             }
 
             _logger.ProgressInfo("Report for {0} ({1}) sent to {2} from indexer {3}. {4}", remoteMovie.Movie.Title, remoteMovie.Movie.Year, downloadClient.Definition.Name, remoteMovie.Release.Indexer, downloadTitle);
-            _eventAggregator.PublishEvent(movieGrabbedEvent);
+            return movieGrabbedEvent;
         }
     }
 }

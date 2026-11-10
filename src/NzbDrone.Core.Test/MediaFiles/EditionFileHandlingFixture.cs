@@ -269,7 +269,7 @@ namespace NzbDrone.Core.Test.MediaFiles
             };
             var result = Mocker.Resolve<MovieEditionNamingPreviewService>().Preview(proposal);
             result.NamingValid.Should().BeTrue();
-            result.CreationEnabled.Should().BeFalse();
+            result.CreationEnabled.Should().BeTrue();
             result.Samples.Should().HaveCount(3);
             result.ProposedEdition.Attributes["cut"].Should().Be("theatrical");
             result.ProposedEdition.Attributes["stereoscopic"].Should().Be("3d");
@@ -358,6 +358,98 @@ namespace NzbDrone.Core.Test.MediaFiles
             var result = Mocker.Resolve<MovieEditionNamingPreviewService>().Preview(new MovieEdition { MovieId = _movie.Id, Name = "<>" });
             result.NamingValid.Should().BeFalse();
             result.Rejections.Should().Contain(r => r.Contains("usable filename label"));
+        }
+
+        [TestCase(31)]
+        [TestCase(32)]
+        public void naming_preview_bounds_attributes_after_defaulting_the_cut(int count)
+        {
+            ManualImport(_imax, "SyntheticAttributeLimit");
+            var proposal = new MovieEdition
+            {
+                MovieId = _movie.Id, Name = "Synthetic Attribute Limit",
+                Attributes = Enumerable.Range(0, count).ToDictionary(i => "synthetic-" + i, _ => "Synthetic Value")
+            };
+            var preview = Mocker.Resolve<MovieEditionNamingPreviewService>();
+            if (count == 31)
+            {
+                preview.Preview(proposal).ProposedEdition.Attributes.Should().HaveCount(32);
+            }
+            else
+            {
+                Action validate = () => preview.Preview(proposal);
+                validate.Should().Throw<ArgumentException>();
+            }
+        }
+
+        private MovieEdition CreateManaged(string name)
+        {
+            Mocker.SetConstant<IMovieEditionNamingPreviewService>(Mocker.Resolve<MovieEditionNamingPreviewService>());
+            return Mocker.Resolve<MovieEditionManagementService>().Create(new MovieEdition
+            {
+                MovieId = _movie.Id, Name = name, Monitored = true, MovieFileId = _imax.MovieFileId,
+                Attributes = new Dictionary<string, string> { { "stereoscopic", "3d" }, { "framing", "imax" }, { "custom-label", "Synthetic Collector" } }
+            });
+        }
+
+        [Test]
+        public void managed_creation_uses_fresh_preview_and_creates_only_an_unmonitored_empty_target()
+        {
+            ManualImport(_imax, "SyntheticCreationImax");
+            ManualImport(_directors, "SyntheticCreationDirectors");
+            var before = Db.All<MovieFile>().Select(f => (f.Id, f.RelativePath, f.MovieEditionId)).ToList();
+            var created = CreateManaged("Synthetic Collector 3D IMAX");
+            created.Id.Should().BePositive();
+            created.EditionKey.Should().StartWith("custom-");
+            created.Monitored.Should().BeFalse();
+            created.MovieFileId.Should().BeNull();
+            created.QualityProfileId.Should().Be(_movie.QualityProfileId);
+            created.Attributes["cut"].Should().Be("theatrical");
+            created.Attributes["stereoscopic"].Should().Be("3d");
+            created.Attributes["framing"].Should().Be("imax");
+            created.Attributes["custom-label"].Should().Be("Synthetic Collector");
+            Db.All<MovieFile>().Select(f => (f.Id, f.RelativePath, f.MovieEditionId)).Should().BeEquivalentTo(before);
+            Db.Single<Movie>().PrimaryEditionId.Should().Be(_imax.Id);
+            _recycled.Should().BeEmpty();
+        }
+
+        [TestCase("Theatrical IMAX")]
+        [TestCase("<>")]
+        public void managed_creation_rejects_invalid_or_colliding_names_without_creating_a_target(string name)
+        {
+            ManualImport(_imax, "SyntheticCreationImax");
+            Action create = () => CreateManaged(name);
+            create.Should().Throw<InvalidOperationException>();
+            _editions.GetByMovie(_movie.Id).Should().HaveCount(2);
+            Db.All<MovieFile>().Should().ContainSingle();
+            _recycled.Should().BeEmpty();
+        }
+
+        [TestCase(".avi")]
+        [TestCase(".en.srt")]
+        public void managed_creation_checks_unrecorded_disk_video_and_sidecar_conflicts(string extension)
+        {
+            ManualImport(_imax, "SyntheticCreationImax");
+            var proposal = new MovieEdition { MovieId = _movie.Id, Name = "Synthetic Collector 3D IMAX" };
+            var path = Mocker.Resolve<MovieEditionNamingPreviewService>().Preview(proposal).Samples.Last().RelativePath;
+            var conflict = Path.Combine(_movie.Path, Path.ChangeExtension(path, null) + extension);
+            File.WriteAllText(conflict, "Synthetic conflict bytes");
+            Action create = () => CreateManaged(proposal.Name);
+            create.Should().Throw<InvalidOperationException>();
+            File.ReadAllText(conflict).Should().Be("Synthetic conflict bytes");
+            _editions.GetByMovie(_movie.Id).Should().HaveCount(2);
+            _recycled.Should().BeEmpty();
+        }
+
+        [Test]
+        public void managed_creation_reruns_naming_validation_after_a_successful_preview()
+        {
+            ManualImport(_imax, "SyntheticCreationImax");
+            Mocker.Resolve<MovieEditionNamingPreviewService>().Preview(new MovieEdition { MovieId = _movie.Id, Name = "Synthetic Preview" }).NamingValid.Should().BeTrue();
+            _naming.RenameMovies = false;
+            Action create = () => CreateManaged("Synthetic Preview");
+            create.Should().Throw<InvalidOperationException>();
+            _editions.GetByMovie(_movie.Id).Should().HaveCount(2);
         }
 
         [Test]

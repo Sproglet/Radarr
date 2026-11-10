@@ -2,15 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 using FizzWare.NBuilder;
+using FluentAssertions;
 using Moq;
 using NUnit.Framework;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.TPL;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Test.Framework;
@@ -64,6 +68,62 @@ namespace NzbDrone.Core.Test.Download
             Assert.ThrowsAsync<InvalidOperationException>(() => Subject.DownloadReport(_parseResult, null));
             Mocker.GetMock<IProvideDownloadClient>().Verify(s => s.GetDownloadClient(It.IsAny<DownloadProtocol>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<HashSet<int>>()), Times.Never());
             VerifyEventNotPublished<MovieGrabbedEvent>();
+        }
+
+        [Test]
+        public async Task adding_a_target_cannot_overtake_an_authorized_submission_during_an_async_wait()
+        {
+            _parseResult.Release.Title = "Synthetic.Voyage.2026.1080p.BluRay-SyntheticGroup";
+            var targets = new List<MovieEdition> { new() { Id = 1, MovieId = _parseResult.Movie.Id } };
+            Mocker.GetMock<IMovieEditionRepository>().Setup(r => r.GetByMovie(_parseResult.Movie.Id)).Returns(() => targets.ToList());
+            Mocker.GetMock<IMovieRepository>().Setup(r => r.Find(_parseResult.Movie.Id)).Returns(_parseResult.Movie);
+            var proposed = new MovieEdition { MovieId = _parseResult.Movie.Id, Name = "Synthetic New 3D" };
+            Mocker.GetMock<IMovieEditionNamingPreviewService>().Setup(p => p.Preview(proposed)).Returns(new MovieEditionNamingPreview
+            {
+                ProposedEdition = proposed,
+                Samples = new() { new() { RelativePath = "Synthetic New 3D.mkv" } }
+            });
+            Mocker.GetMock<IMovieEditionRepository>()
+                .Setup(r => r.CreateUnmonitored(proposed, _parseResult.Movie, It.IsAny<List<MovieEdition>>()))
+                .Returns(() => { proposed.Id = 2; targets.Add(proposed); return proposed; });
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Mocker.GetMock<IRateLimitService>().Setup(r => r.WaitAndPulseAsync(It.IsAny<string>(), It.IsAny<TimeSpan>()))
+                .Returns(() => { entered.SetResult(); return resume.Task; });
+            var client = WithUsenetClient();
+            client.Setup(c => c.Download(It.IsAny<RemoteMovie>(), It.IsAny<IIndexer>()))
+                .Returns(() => { targets.Should().ContainSingle(); return Task.FromResult("SyntheticSubmittedJob"); });
+            var service = Mocker.Resolve<MovieEditionManagementService>();
+            var download = Subject.DownloadReport(_parseResult, null);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            using var creationStarted = new ManualResetEventSlim();
+            var creation = Task.Run(() => { creationStarted.Set(); return service.Create(proposed); });
+            try
+            {
+                creationStarted.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
+                (await Task.WhenAny(creation, Task.Delay(100))).Should().NotBe(creation);
+            }
+            finally
+            {
+                resume.TrySetResult();
+            }
+
+            await Task.WhenAll(download, creation).WaitAsync(TimeSpan.FromSeconds(5));
+            targets.Should().HaveCount(2);
+            Assert.ThrowsAsync<InvalidOperationException>(() => Subject.DownloadReport(_parseResult, null));
+            client.Verify(c => c.Download(It.IsAny<RemoteMovie>(), It.IsAny<IIndexer>()), Times.Once());
+        }
+
+        [Test]
+        public async Task acquisition_gate_is_released_before_synchronous_grab_subscribers()
+        {
+            WithUsenetClient().Setup(c => c.Download(It.IsAny<RemoteMovie>(), It.IsAny<IIndexer>())).ReturnsAsync("SyntheticSubmittedJob");
+            Mocker.GetMock<IEventAggregator>().Setup(e => e.PublishEvent(It.IsAny<MovieGrabbedEvent>())).Callback(() =>
+            {
+                var callback = Task.Run(() => { using var lease = MovieEditionAcquisitionGate.Acquire(_parseResult.Movie.Id); });
+                callback.Wait(TimeSpan.FromSeconds(2)).Should().BeTrue();
+            });
+            await Subject.DownloadReport(_parseResult, null).WaitAsync(TimeSpan.FromSeconds(5));
         }
 
         private Mock<IDownloadClient> WithUsenetClient()

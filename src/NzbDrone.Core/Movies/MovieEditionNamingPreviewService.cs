@@ -25,7 +25,7 @@ namespace NzbDrone.Core.Movies
         public List<MovieEditionNamingSample> Samples { get; set; } = new();
         public List<string> Rejections { get; set; } = new();
         public bool NamingValid => Rejections.Count == 0 && Samples.Count > 0;
-        public bool CreationEnabled => false;
+        public bool CreationEnabled => NamingValid;
     }
 
     public interface IMovieEditionNamingPreviewService
@@ -67,14 +67,14 @@ namespace NzbDrone.Core.Movies
             }
 
             var attributes = new Dictionary<string, string>(proposal.Attributes ?? new(), StringComparer.OrdinalIgnoreCase);
-            if (attributes.Count > 32 || attributes.Any(a => string.IsNullOrWhiteSpace(a.Key) || a.Key.Length > 64 || string.IsNullOrWhiteSpace(a.Value) || a.Value.Length > 128))
-            {
-                throw new ArgumentException("Edition attributes require at most 32 nonempty keys/values, with keys up to 64 and values up to 128 characters.");
-            }
-
             if (!attributes.ContainsKey("cut"))
             {
                 attributes.Add("cut", "theatrical");
+            }
+
+            if (attributes.Count > 32 || attributes.Any(a => string.IsNullOrWhiteSpace(a.Key) || a.Key.Length > 64 || string.IsNullOrWhiteSpace(a.Value) || a.Value.Length > 128))
+            {
+                throw new ArgumentException("Edition attributes require at most 32 nonempty keys/values, with keys up to 64 and values up to 128 characters.");
             }
 
             var rules = new List<string>(proposal.MatchRules ?? new());

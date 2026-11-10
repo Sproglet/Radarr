@@ -5,6 +5,7 @@ using System.Linq;
 using Dapper;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Profiles.Qualities;
 
 namespace NzbDrone.Core.Movies
 {
@@ -12,6 +13,7 @@ namespace NzbDrone.Core.Movies
     {
         List<MovieEdition> GetByMovie(int movieId);
         bool UsesQualityProfile(int profileId);
+        MovieEdition CreateUnmonitored(MovieEdition edition, Movie expectedMovie, List<MovieEdition> expectedEditions);
         void SetPrimaryEdition(int movieId, int editionId);
         void SetCurrentFile(int movieId, int editionId, int fileId, int? expectedFileId);
     }
@@ -93,6 +95,62 @@ namespace NzbDrone.Core.Movies
         {
             using var connection = _database.OpenConnection();
             return connection.ExecuteScalar<bool>(@"SELECT EXISTS (SELECT 1 FROM ""MovieEditions"" WHERE ""QualityProfileId"" = @ProfileId)", new { ProfileId = profileId });
+        }
+
+        // Management creation only. The service must validate naming/disk destinations first under the folder lock.
+        // The parent snapshot prevents a stale preview from creating against changed target ownership/settings.
+        public MovieEdition CreateUnmonitored(MovieEdition edition, Movie expectedMovie, List<MovieEdition> expectedEditions)
+        {
+            if (edition.Id != 0 || edition.MovieId <= 0 || edition.MovieId != expectedMovie.Id || edition.Monitored || edition.MovieFileId.HasValue ||
+                string.IsNullOrWhiteSpace(edition.EditionKey) || string.IsNullOrWhiteSpace(edition.Name))
+            {
+                throw new ArgumentException("New editions must be unmonitored, have no current file and belong to the expected movie.");
+            }
+
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            var locked = connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", new { edition.MovieId }, transaction);
+            if (locked != 1)
+            {
+                throw new ModelNotFoundException(typeof(Movie), edition.MovieId);
+            }
+
+            var parent = connection.QuerySingle<Movie>(@"SELECT * FROM ""Movies"" WHERE ""Id"" = @MovieId", new { edition.MovieId }, transaction);
+            var current = connection.Query<MovieEdition>(@"SELECT * FROM ""MovieEditions"" WHERE ""MovieId"" = @MovieId", new { edition.MovieId }, transaction).ToList();
+            if (parent.PrimaryEditionId != expectedMovie.PrimaryEditionId || parent.QualityProfileId != expectedMovie.QualityProfileId ||
+                parent.Path != expectedMovie.Path || current.Count != expectedEditions.Count || current.Any(e => !expectedEditions.Any(old => SameTarget(e, old))))
+            {
+                throw new InvalidOperationException("The movie or its editions changed during the naming preview. Reload and try again.");
+            }
+
+            if (current.Any(e => string.Equals(e.Name, edition.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException("An edition with this name already exists for the movie.");
+            }
+
+            // Hold a profile key lock until commit. A concurrent deletion either wins first (creation fails)
+            // or observes the newly committed edition in its transactional reference guard and rolls back.
+            var profileLock = _database.DatabaseType == DatabaseType.PostgreSQL ? " FOR KEY SHARE" : "";
+            var profileId = connection.QuerySingleOrDefault<int?>($@"SELECT ""Id"" FROM ""QualityProfiles"" WHERE ""Id"" = @QualityProfileId{profileLock}", new { edition.QualityProfileId }, transaction);
+            if (!profileId.HasValue)
+            {
+                throw new ModelNotFoundException(typeof(QualityProfile), edition.QualityProfileId);
+            }
+
+            Insert(connection, transaction, edition);
+            transaction.Commit();
+            ModelCreated(edition);
+            return edition;
+        }
+
+        private static bool SameTarget(MovieEdition current, MovieEdition expected)
+        {
+            return current.Id == expected.Id && current.MovieId == expected.MovieId && current.EditionKey == expected.EditionKey &&
+                current.Name == expected.Name && current.QualityProfileId == expected.QualityProfileId && current.MovieFileId == expected.MovieFileId &&
+                current.Monitored == expected.Monitored && current.RuleRevision == expected.RuleRevision &&
+                (current.MatchRules ?? new()).SequenceEqual(expected.MatchRules ?? new()) &&
+                (current.Attributes ?? new()).Count == (expected.Attributes ?? new()).Count &&
+                (current.Attributes ?? new()).All(a => (expected.Attributes ?? new()).TryGetValue(a.Key, out var value) && value == a.Value);
         }
 
         public void SetPrimaryEdition(int movieId, int editionId)

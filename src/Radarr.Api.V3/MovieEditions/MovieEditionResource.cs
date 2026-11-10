@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Movies;
 using NzbDrone.Core.Qualities;
 using Radarr.Http.REST;
 
@@ -24,5 +26,44 @@ namespace Radarr.Api.V3.MovieEditions
         public int RuleRevision { get; set; }
         public string State { get; set; }
         public string RejectionReason { get; set; }
+    }
+
+    public static class MovieEditionResourceMapper
+    {
+        public static MovieEditionResource ToResource(this MovieEdition edition, Movie movie, IMovieEditionContextService contexts)
+        {
+            var resource = new MovieEditionResource
+            {
+                Id = edition.Id,
+                MovieId = edition.MovieId,
+                EditionKey = edition.EditionKey,
+                Name = edition.Name,
+                IsPrimary = edition.Id == movie.PrimaryEditionId,
+                Monitored = edition.Monitored,
+                EffectiveMonitored = movie.Monitored && edition.Monitored,
+                QualityProfileId = edition.QualityProfileId,
+                MovieFileId = edition.MovieFileId,
+                LastSearchTime = edition.LastSearchTime,
+                Attributes = edition.Attributes,
+                MatchRules = edition.MatchRules,
+                RuleRevision = edition.RuleRevision
+            };
+
+            try
+            {
+                var context = contexts.Resolve(movie, edition.Id);
+                resource.QualityProfileName = context.QualityProfile.Name;
+                resource.RelativePath = context.CurrentFile?.RelativePath;
+                resource.Quality = context.CurrentFile?.Quality;
+                resource.State = context.CurrentFile == null ? "missing" : "present";
+            }
+            catch (Exception ex) when (ex is InvalidOperationException || ex is ModelNotFoundException)
+            {
+                resource.State = "invalid";
+                resource.RejectionReason = ex.Message;
+            }
+
+            return resource;
+        }
     }
 }

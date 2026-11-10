@@ -291,7 +291,8 @@ def verify_edition_reads():
         assert record["qualityProfileId"] == 1 and record["qualityProfileName"], record
     for path, expected_code, method in [("api/v3/movieedition", 400, "GET"), ("api/v3/movieedition?movieId=0", 400, "GET"),
             ("api/v3/movieedition?movieId=-1", 400, "GET"), ("api/v3/movieedition?movieId=999999", 404, "GET"),
-            ("api/v3/movieedition?movieId=1", 405, "POST")]:
+            ("api/v3/movieedition/999999", 404, "GET"), ("api/v3/movieedition/1", 405, "PUT"),
+            ("api/v3/movieedition/1", 405, "DELETE")]:
         try:
             original_api(path, method=method)
         except urllib.error.HTTPError as error:
@@ -346,7 +347,7 @@ def verify_edition_reads():
     p.start()
     assert p.snapshot() == before
     print("PASS: read-only edition API exposes owned files, combined/custom labels, independent profiles and monitoring; invalid/missing targets stay explicit without mutation", flush=True)
-    print("PASS: API rejects invalid parents and write methods; manual preview/reprocess names match the validated target", flush=True)
+    print("PASS: API rejects invalid parents/IDs and unsupported edits/deletes; manual preview/reprocess names match the validated target", flush=True)
 
 
 def verify_selector_imports(secondary_profile):
@@ -444,7 +445,7 @@ def verify_naming_preview():
     body = {"movieId": 1, "name": "Synthetic Collector 3D IMAX", "attributes": {"framing": "imax", "stereoscopic": "3d", "custom-label": "Synthetic Open Label"},
             "matchRules": ["SyntheticExclusiveGroup$"], "monitored": True, "id": 999, "movieFileId": before[2][0]}
     preview = p.api("api/v3/movieedition/preview", body)
-    assert preview["namingValid"] and not preview["creationEnabled"], preview
+    assert preview["namingValid"] and preview["creationEnabled"], preview
     proposed = preview["proposedEdition"]
     assert proposed["id"] == 0 and not proposed["monitored"] and proposed["qualityProfileId"] == 1, proposed
     assert proposed["attributes"] == dict(body["attributes"], cut="theatrical"), proposed
@@ -596,9 +597,109 @@ def verify_wanted(secondary_profile):
     print("PASS: monitoring, compact quality JSON, pagination totals and primary projection remain correct through profile changes and restart; media/history are unchanged", flush=True)
 
 
+
+def verify_creation(secondary_profile):
+    original = p.snapshot()
+    p.api("api/v3/moviefile/" + str(original[2][0]), method="DELETE")
+    p.stop()
+    # Set up a single existing legacy target; every new target below is created by the real API.
+    with p.database() as db:
+        db.execute('DELETE FROM "MovieEditions" WHERE "Id"=2')
+    p.start()
+    history = p.rows("History")
+    body = {"movieId": 1, "name": "Synthetic Directors Cut 3D", "qualityProfileId": secondary_profile,
+            "attributes": {"cut": "directors-cut", "stereoscopic": "3d"}, "matchRules": ["SyntheticCreatedGroup$"],
+            "id": 999, "editionKey": "legacy-primary", "monitored": True, "isPrimary": True, "movieFileId": original[1][0],
+            "creationEnabled": True, "namingValid": True}
+
+    def rejects(proposal, status):
+        before = p.rows("MovieEditions")
+        try:
+            original_api("api/v3/movieedition", proposal)
+        except urllib.error.HTTPError as error:
+            assert error.code == status, (error.code, error.read().decode())
+        else:
+            raise AssertionError("Expected creation rejection")
+        assert p.rows("MovieEditions") == before
+
+    preview = p.api("api/v3/movieedition/preview", body)
+    assert preview["namingValid"] and preview["creationEnabled"], preview
+    naming = p.api("api/v3/config/naming")
+    p.api("api/v3/config/naming/" + str(naming["id"]), dict(naming, renameMovies=False), "PUT")
+    rejects(body, 409)
+    p.api("api/v3/config/naming/" + str(naming["id"]), naming, "PUT")
+    destination = p.MOVIE / preview["samples"][-1]["relativePath"]
+    for suffix in [".avi", ".en.srt"]:
+        conflict = destination.with_suffix(suffix)
+        conflict.write_bytes(b"Synthetic conflicting file bytes")
+        rejects(body, 409)
+        assert conflict.read_bytes() == b"Synthetic conflicting file bytes"
+        conflict.unlink()
+    for changes, status in [({"name": "Theatrical IMAX"}, 409), ({"name": "<>"}, 409), ({"name": ""}, 400),
+            ({"movieId": 999999}, 404), ({"qualityProfileId": 999999}, 404), ({"matchRules": ["["]}, 400)]:
+        rejects(dict(body, **changes), status)
+    request = p.urllib.request.Request("http://127.0.0.1:17878/api/v3/movieedition", data=json.dumps(body).encode(),
+            headers={"X-Api-Key": p.KEY, "Content-Type": "application/json"}, method="POST")
+    with p.urllib.request.urlopen(request, timeout=15) as response:
+        created = json.loads(response.read())
+        assert response.status == 201 and response.headers["Location"].endswith("/movieedition/" + str(created["id"])), response.status
+    target = created["id"]
+    assert target not in [1, 2, 999] and created["editionKey"].startswith("custom-"), created
+    assert not created["monitored"] and not created["effectiveMonitored"] and not created["isPrimary"], created
+    assert created["state"] == "missing" and created.get("movieFileId") is None and created["qualityProfileId"] == secondary_profile, created
+    assert p.api("api/v3/movieedition/" + str(target)) == created
+    assert p.rows("History") == history and len(p.rows("MovieFiles")) == 1
+    rejects(dict(body, name=body["name"].upper()), 409)
+    for method in ["PUT", "DELETE"]:
+        try:
+            original_api("api/v3/movieedition/" + str(target), body if method == "PUT" else None, method)
+        except urllib.error.HTTPError as error:
+            assert error.code == 405, error.code
+        else:
+            raise AssertionError("Edition editing/deletion must remain unavailable")
+
+    def capture():
+        result = {}
+        for file in p.rows("MovieFiles"):
+            subtitle = next(e for e in p.rows("SubtitleFiles") if e["MovieFileId"] == file["Id"])
+            result[file["MovieEditionId"]] = (file["Id"], file["RelativePath"], hashlib.sha256((p.MOVIE / file["RelativePath"]).read_bytes()).hexdigest(),
+                subtitle["Id"], subtitle["RelativePath"], (p.MOVIE / subtitle["RelativePath"]).read_text())
+        assert {e["Id"]: e["MovieFileId"] for e in p.rows("MovieEditions") if e["MovieFileId"] is not None} == {eid: f[0] for eid, f in result.items()}
+        assert p.api("api/v3/movie/1")["movieFileId"] == result[1][0]
+        return result
+
+    p.manual(target, "Directors.Cut.3D.SyntheticCreatedGroup", "pink")
+    assert capture()[1] == original[1] and len(capture()) == 2
+    custom_body = {"movieId": 1, "name": "Synthetic Collector 3D IMAX", "attributes": {"stereoscopic": "3d", "framing": "imax", "custom-label": "Synthetic Collector"}}
+    custom = p.api("api/v3/movieedition", custom_body)
+    assert custom["attributes"] == dict(custom_body["attributes"], cut="theatrical") and not custom["monitored"], custom
+    p.manual(custom["id"], "Theatrical.3D.IMAX.SyntheticCollectorGroup", "purple")
+    before = capture()
+    assert len(before) == 3 and before[1] == original[1]
+    for eid, colour in [(target, "white"), (1, "blue")]:
+        p.manual(eid, "SyntheticCreatedUpgrade" + str(eid), colour)
+        after = capture()
+        assert after[eid][0] != before[eid][0] and after[eid][2] != before[eid][2]
+        assert all(after[other] == before[other] for other in before if other != eid)
+        p.command("RescanMovie", movieId=1)
+        p.command("RenameMovie", movieIds=[1])
+        p.stop()
+        p.start()
+        assert capture() == after
+        before = after
+    for record in [created, custom]:
+        current = p.api("api/v3/movieedition/" + str(record["id"]))
+        assert current["editionKey"] == record["editionKey"] and current["attributes"] == record["attributes"] and not current["monitored"], current
+        assert current["state"] == "present", current
+    assert not p.rows("DownloadHistory")
+    print("PASS: real POST creates unmonitored targets with stable keys; missing cut defaults while combined/custom attributes persist", flush=True)
+    print("PASS: fresh naming/disk validation rejects collisions and spoofed ownership/monitoring cannot alter the primary; editing/deletion remain gated", flush=True)
+    print("PASS: API-created Director's Cut / 3D and Theatrical / 3D / IMAX import, scan, rename and restart; upgrades preserve every other edition's video/subtitle bytes and IDs", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -615,6 +716,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "creation":
+        verify_creation(secondary["id"])
+        return
     if scenario == "wanted":
         verify_wanted(secondary["id"])
         return
