@@ -49,6 +49,7 @@ namespace NzbDrone.Core.Test.Download
                    .With(c => c.Movie = Builder<Movie>.CreateNew().Build())
                    .With(c => c.Release = releaseInfo)
                    .Build();
+            Mocker.GetMock<IMovieRepository>().Setup(r => r.Find(_parseResult.Movie.Id)).Returns(() => _parseResult.Movie);
         }
 
         [TestCase(false)]
@@ -143,6 +144,79 @@ namespace NzbDrone.Core.Test.Download
             Assert.ThrowsAsync<InvalidOperationException>(() => Subject.DownloadReport(_parseResult, null));
             Mocker.GetMock<IProvideDownloadClient>().Verify(s => s.GetDownloadClient(It.IsAny<DownloadProtocol>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<HashSet<int>>()), Times.Never());
             VerifyEventNotPublished<MovieGrabbedEvent>();
+        }
+
+        private Movie CopyAcquisitionState()
+        {
+            var movie = _parseResult.Movie;
+            return new Movie { Id = movie.Id, MovieMetadataId = movie.MovieMetadataId, QualityProfileId = movie.QualityProfileId,
+                PrimaryEditionId = movie.PrimaryEditionId, MovieFileId = movie.MovieFileId, Monitored = movie.Monitored, Path = movie.Path,
+                Tags = movie.Tags == null ? new HashSet<int>() : new HashSet<int>(movie.Tags) };
+        }
+
+        [Test]
+        public async Task stale_or_missing_movie_cannot_reach_client_submission(
+            [Values("missing", "profile", "primary", "file", "monitoring", "path", "metadata", "tags", "identity", "remote")] string change,
+            [Values(false, true)] bool duringWait)
+        {
+            _parseResult.Release.Title = "Synthetic.Voyage.2026.1080p.BluRay-SyntheticGroup";
+            var current = CopyAcquisitionState();
+            var evaluatedProfile = _parseResult.Movie.QualityProfileId;
+            Mocker.GetMock<IMovieRepository>().Setup(r => r.Find(_parseResult.Movie.Id)).Returns(() => current);
+            Mocker.GetMock<IMovieEditionRepository>().Setup(r => r.GetByMovie(_parseResult.Movie.Id)).Returns(new List<MovieEdition>
+                { new() { Id = 1, MovieId = _parseResult.Movie.Id, QualityProfileId = evaluatedProfile, Monitored = _parseResult.Movie.Monitored } });
+            var client = WithUsenetClient();
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Mocker.GetMock<IRateLimitService>().Setup(r => r.WaitAndPulseAsync(It.IsAny<string>(), It.IsAny<TimeSpan>()))
+                .Returns(() => { entered.SetResult(); return resume.Task; });
+            Task operation = null;
+            if (duringWait)
+            {
+                operation = Subject.DownloadReport(_parseResult, null);
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+
+            if (change == "missing") current = null;
+            if (change == "profile") current.QualityProfileId++;
+            if (change == "primary") current.PrimaryEditionId = (current.PrimaryEditionId ?? 0) + 1;
+            if (change == "file") current.MovieFileId++;
+            if (change == "monitoring") current.Monitored = !current.Monitored;
+            if (change == "path") current.Path += "/SyntheticChanged";
+            if (change == "metadata") current.MovieMetadataId++;
+            if (change == "tags") current.Tags.Add(999999);
+            if (change == "identity") current.Id++;
+            if (change == "remote") _parseResult.Movie.QualityProfileId++;
+            resume.TrySetResult();
+            operation ??= Subject.DownloadReport(_parseResult, null);
+            Func<Task> submit = () => operation;
+
+            await submit.Should().ThrowAsync<InvalidOperationException>().WithMessage("*changed after release evaluation*");
+
+            client.Verify(c => c.Download(It.IsAny<RemoteMovie>(), It.IsAny<IIndexer>()), Times.Never());
+            if (!duringWait)
+            {
+                Mocker.GetMock<IProvideDownloadClient>().Verify(c => c.GetDownloadClient(It.IsAny<DownloadProtocol>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<HashSet<int>>()), Times.Never());
+            }
+
+            VerifyEventNotPublished<MovieGrabbedEvent>();
+            if (change != "remote") _parseResult.Movie.QualityProfileId.Should().Be(evaluatedProfile);
+        }
+
+        [Test]
+        public async Task detached_unchanged_parent_with_same_tags_in_another_order_keeps_legacy_submission()
+        {
+            _parseResult.Release.Title = "Synthetic.Voyage.2026.1080p.BluRay-SyntheticGroup";
+            _parseResult.Movie.Tags = new HashSet<int> { 101, 102 };
+            var current = CopyAcquisitionState();
+            current.Tags = new HashSet<int> { 102, 101 };
+            Mocker.GetMock<IMovieRepository>().Setup(r => r.Find(_parseResult.Movie.Id)).Returns(current);
+            WithUsenetClient().Setup(c => c.Download(It.IsAny<RemoteMovie>(), It.IsAny<IIndexer>())).ReturnsAsync("SyntheticSubmittedJob");
+
+            await Subject.DownloadReport(_parseResult, null);
+
+            Mocker.GetMock<IMovieRepository>().Verify(r => r.Find(current.Id), Times.Exactly(2));
+            VerifyEventPublished<MovieGrabbedEvent>();
         }
 
         private Mock<IDownloadClient> WithUsenetClient()

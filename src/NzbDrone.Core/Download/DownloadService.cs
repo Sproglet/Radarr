@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.EnsureThat;
@@ -31,6 +32,7 @@ namespace NzbDrone.Core.Download
         private readonly IEventAggregator _eventAggregator;
         private readonly ISeedConfigProvider _seedConfigProvider;
         private readonly IMovieEditionRepository _editions;
+        private readonly IMovieRepository _movies;
         private readonly Logger _logger;
 
         public DownloadService(IProvideDownloadClient downloadClientProvider,
@@ -41,6 +43,7 @@ namespace NzbDrone.Core.Download
                                IEventAggregator eventAggregator,
                                ISeedConfigProvider seedConfigProvider,
                                IMovieEditionRepository editions,
+                               IMovieRepository movies,
                                Logger logger)
         {
             _downloadClientProvider = downloadClientProvider;
@@ -51,32 +54,45 @@ namespace NzbDrone.Core.Download
             _eventAggregator = eventAggregator;
             _seedConfigProvider = seedConfigProvider;
             _editions = editions;
+            _movies = movies;
             _logger = logger;
         }
 
         public async Task DownloadReport(RemoteMovie remoteMovie, int? downloadClientId)
         {
-            using var acquisition = remoteMovie.Movie == null ? null : await MovieEditionAcquisitionGate.AcquireAsync(remoteMovie.Movie.Id);
-            if (MovieEditionAcquisitionGuard.RequiresEditionContext(remoteMovie, remoteMovie.Movie == null ? null : _editions.GetByMovie(remoteMovie.Movie.Id)))
-            {
-                throw new InvalidOperationException("Multi-edition acquisition is disabled. Import files with explicit edition assignments instead.");
-            }
+            Ensure.That(remoteMovie.Movie, () => remoteMovie.Movie).IsNotNull();
+            var snapshot = new AcquisitionSnapshot(remoteMovie.Movie);
+            using var acquisition = await MovieEditionAcquisitionGate.AcquireAsync(snapshot.MovieId);
+            ValidateAcquisition(remoteMovie, snapshot);
 
             var filterBlockedClients = remoteMovie.Release.PendingReleaseReason == PendingReleaseReason.DownloadClientUnavailable;
 
-            var tags = remoteMovie.Movie?.Tags;
+            var tags = remoteMovie.Movie.Tags;
 
             var downloadClient = downloadClientId.HasValue
                 ? _downloadClientProvider.Get(downloadClientId.Value)
                 : _downloadClientProvider.GetDownloadClient(remoteMovie.Release.DownloadProtocol, remoteMovie.Release.IndexerId, filterBlockedClients, tags);
 
-            var grabbed = await DownloadReport(remoteMovie, downloadClient);
+            var grabbed = await DownloadReport(remoteMovie, downloadClient, snapshot);
             // Client submission is complete. Release before notifications/scripts, which may call the API.
-            acquisition?.Dispose();
+            acquisition.Dispose();
             _eventAggregator.PublishEvent(grabbed);
         }
 
-        private async Task<MovieGrabbedEvent> DownloadReport(RemoteMovie remoteMovie, IDownloadClient downloadClient)
+        private void ValidateAcquisition(RemoteMovie remoteMovie, AcquisitionSnapshot snapshot)
+        {
+            if (!snapshot.Matches(_movies.Find(snapshot.MovieId)) || !snapshot.Matches(remoteMovie.Movie))
+            {
+                throw new InvalidOperationException("The movie changed after release evaluation. Refresh the release before submitting it.");
+            }
+
+            if (MovieEditionAcquisitionGuard.RequiresEditionContext(remoteMovie, _editions.GetByMovie(snapshot.MovieId)))
+            {
+                throw new InvalidOperationException("Multi-edition acquisition is disabled. Import files with explicit edition assignments instead.");
+            }
+        }
+
+        private async Task<MovieGrabbedEvent> DownloadReport(RemoteMovie remoteMovie, IDownloadClient downloadClient, AcquisitionSnapshot snapshot)
         {
             Ensure.That(remoteMovie.Movie, () => remoteMovie.Movie).IsNotNull();
 
@@ -107,6 +123,9 @@ namespace NzbDrone.Core.Download
             string downloadClientId;
             try
             {
+                // A rate-limit wait can outlive changes made by legacy writers or
+                // another process. Re-read ownership/preferences before client IO.
+                ValidateAcquisition(remoteMovie, snapshot);
                 downloadClientId = await downloadClient.Download(remoteMovie, indexer);
                 _downloadClientStatusService.RecordSuccess(downloadClient.Definition.Id);
                 _indexerStatusService.RecordSuccess(remoteMovie.Release.IndexerId);
@@ -152,6 +171,34 @@ namespace NzbDrone.Core.Download
 
             _logger.ProgressInfo("Report for {0} ({1}) sent to {2} from indexer {3}. {4}", remoteMovie.Movie.Title, remoteMovie.Movie.Year, downloadClient.Definition.Name, remoteMovie.Release.Indexer, downloadTitle);
             return movieGrabbedEvent;
+        }
+
+        private sealed class AcquisitionSnapshot
+        {
+            public int MovieId { get; }
+            private readonly int _metadataId;
+            private readonly int _profileId;
+            private readonly int? _primaryId;
+            private readonly int _fileId;
+            private readonly bool _monitored;
+            private readonly string _path;
+            private readonly HashSet<int> _tags;
+
+            public AcquisitionSnapshot(Movie movie)
+            {
+                MovieId = movie.Id;
+                _metadataId = movie.MovieMetadataId;
+                _profileId = movie.QualityProfileId;
+                _primaryId = movie.PrimaryEditionId;
+                _fileId = movie.MovieFileId;
+                _monitored = movie.Monitored;
+                _path = movie.Path;
+                _tags = movie.Tags == null ? new HashSet<int>() : new HashSet<int>(movie.Tags);
+            }
+
+            public bool Matches(Movie movie) => movie != null && movie.Id == MovieId && movie.MovieMetadataId == _metadataId &&
+                movie.QualityProfileId == _profileId && movie.PrimaryEditionId == _primaryId && movie.MovieFileId == _fileId &&
+                movie.Monitored == _monitored && movie.Path == _path && _tags.SetEquals(movie.Tags ?? new HashSet<int>());
         }
     }
 }
