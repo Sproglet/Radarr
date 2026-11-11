@@ -87,6 +87,9 @@ namespace NzbDrone.Core.Movies
                   AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = h.""MovieEditionId"")
                   AND NOT EXISTS (SELECT 1 FROM ""DownloadHistory"" d
                       WHERE d.""DownloadId"" = h.""DownloadId"" AND d.""DownloadClientId"" = h.""DownloadClientId""
+                        AND d.""MovieId"" = h.""MovieId"" AND d.""MovieEditionId"" = h.""MovieEditionId""
+                        AND (d.""EditionRuleRevision"" = h.""EditionRuleRevision""
+                          OR (d.""EditionRuleRevision"" IS NULL AND h.""EditionRuleRevision"" IS NULL))
                         AND d.""EventType"" IN (2, 3, 4)
                         AND (d.""Date"" > h.""Date"" OR (d.""Date"" = h.""Date"" AND d.""Id"" > h.""Id"")))", transaction: transaction);
             if (references != 0)

@@ -109,6 +109,68 @@ namespace NzbDrone.Core.Test.MovieTests
         }
 
         [Test]
+        public void unrelated_or_incomplete_settlement_cannot_release_target_deletion(
+            [Values(DownloadHistoryEventType.DownloadImported, DownloadHistoryEventType.DownloadFailed, DownloadHistoryEventType.DownloadIgnored)] DownloadHistoryEventType eventType,
+            [Values("movie", "target", "unassigned", "revision", "unknown-revision", "client", "download", "older")] string mismatch)
+        {
+            var downloads = Mocker.Resolve<DownloadHistoryRepository>();
+            var grabbed = DateTime.UtcNow;
+            downloads.Insert(new DownloadHistory
+            {
+                MovieId = _movie.Id, MovieEditionId = _secondary.Id, EditionRuleRevision = 1,
+                SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 41, DownloadId = "synthetic-shared", Date = grabbed,
+                EventType = DownloadHistoryEventType.DownloadGrabbed
+            });
+            var terminal = new DownloadHistory
+            {
+                MovieId = _movie.Id, MovieEditionId = _secondary.Id, EditionRuleRevision = 1,
+                SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 41, DownloadId = "synthetic-shared", Date = grabbed.AddMinutes(1), EventType = eventType
+            };
+            if (mismatch == "movie") terminal.MovieId += 999;
+            if (mismatch == "target") terminal.MovieEditionId = _primary.Id;
+            if (mismatch == "unassigned") terminal.MovieEditionId = null;
+            if (mismatch == "revision") terminal.EditionRuleRevision = 2;
+            if (mismatch == "unknown-revision") terminal.EditionRuleRevision = null;
+            if (mismatch == "client") terminal.DownloadClientId = 42;
+            if (mismatch == "download") terminal.DownloadId = "synthetic-other";
+            if (mismatch == "older") terminal.Date = grabbed.AddMinutes(-1);
+            downloads.Insert(terminal);
+
+            Action remove = () => _editions.Delete(_secondary.Id);
+            remove.Should().Throw<InvalidOperationException>();
+            _editions.Get(_secondary.Id).MovieId.Should().Be(_movie.Id);
+            _editions.Get(_secondary.Id).RuleRevision.Should().Be(1);
+            downloads.All().Should().HaveCount(2);
+        }
+
+        [TestCase(DownloadHistoryEventType.DownloadImported)]
+        [TestCase(DownloadHistoryEventType.DownloadFailed)]
+        [TestCase(DownloadHistoryEventType.DownloadIgnored)]
+        public void matching_saved_settlement_allows_deletion_after_rule_edits(DownloadHistoryEventType eventType)
+        {
+            var downloads = Mocker.Resolve<DownloadHistoryRepository>();
+            var saved = downloads.Insert(new DownloadHistory
+            {
+                MovieId = _movie.Id, MovieEditionId = _secondary.Id, EditionRuleRevision = 1,
+                SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 41, DownloadId = "synthetic-shared", Date = DateTime.UtcNow,
+                EventType = DownloadHistoryEventType.DownloadGrabbed,
+                Data = new Dictionary<string, string> { { "movieEditionName", _secondary.Name } }
+            });
+            _secondary.MatchRules.Add("ChangedSyntheticGroup$");
+            _editions.Update(_secondary);
+            _editions.Get(_secondary.Id).RuleRevision.Should().Be(2);
+            saved.Id = 0;
+            saved.EventType = eventType;
+            downloads.Insert(saved); // Same timestamp; the later identity determines event order.
+
+            _editions.Delete(_secondary.Id);
+
+            _editions.Find(_secondary.Id).Should().BeNull();
+            downloads.FindByDownloadId(41, "synthetic-shared").Should().HaveCount(2)
+                .And.OnlyContain(h => h.MovieEditionId == _secondary.Id && h.EditionRuleRevision == 1 && h.Data["movieEditionName"] == "Directors Cut 3D");
+        }
+
+        [Test]
         public void recovery_rejects_disagreement_and_does_not_guess_legacy_assignment()
         {
             var recovery = new MovieEditionRecoveryService(Mocker.GetMock<IMovieEditionContextService>().Object, _editions);
@@ -118,6 +180,23 @@ namespace NzbDrone.Core.Test.MovieTests
             var download = new DownloadHistory { MovieId = _movie.Id, MovieEditionId = _secondary.Id, EventType = DownloadHistoryEventType.DownloadGrabbed, DownloadId = "synthetic-download" };
             Action recover = () => recovery.Recover(_movie, grab, download);
             recover.Should().Throw<InvalidOperationException>();
+        }
+
+        [TestCase(1, 2)]
+        [TestCase(null, 1)]
+        [TestCase(1, null)]
+        public void typed_grab_streams_with_different_saved_revisions_require_review(int? historyRevision, int? downloadRevision)
+        {
+            var recovery = new MovieEditionRecoveryService(Mocker.GetMock<IMovieEditionContextService>().Object, _editions);
+            var grab = new MovieHistory { MovieId = _movie.Id, MovieEditionId = _secondary.Id, EditionRuleRevision = historyRevision,
+                EventType = MovieHistoryEventType.Grabbed, DownloadId = "synthetic-shared" };
+            var download = new DownloadHistory { MovieId = _movie.Id, MovieEditionId = _secondary.Id, EditionRuleRevision = downloadRevision,
+                EventType = DownloadHistoryEventType.DownloadGrabbed, DownloadId = "synthetic-shared" };
+
+            Action recover = () => recovery.Recover(_movie, grab, download);
+
+            recover.Should().Throw<InvalidOperationException>().WithMessage("*saved rule revision*");
+            Mocker.GetMock<IMovieEditionContextService>().Verify(s => s.Resolve(_movie, _secondary.Id, null), Moq.Times.Never());
         }
 
         [Test]

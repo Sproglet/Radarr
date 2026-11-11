@@ -39,24 +39,7 @@ namespace NzbDrone.Core.Download.History
 
         public bool DownloadAlreadyImported(string downloadId)
         {
-            var events = GetEvents(downloadId);
-
-            // Events are ordered by date descending, if a grabbed event comes before an imported event then it was never imported
-            // or grabbed again after importing and should be reprocessed.
-            foreach (var e in events)
-            {
-                if (e.EventType == DownloadHistoryEventType.DownloadGrabbed)
-                {
-                    return false;
-                }
-
-                if (e.EventType == DownloadHistoryEventType.DownloadImported)
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            return IsImported(GetEvents(downloadId));
         }
 
         public DownloadHistory GetLatestDownloadHistoryItem(string downloadId)
@@ -121,9 +104,23 @@ namespace NzbDrone.Core.Download.History
 
         public bool DownloadAlreadyImported(int clientId, string downloadId)
         {
-            var latest = _repository.FindByDownloadId(clientId, downloadId).FirstOrDefault(h => h.EventType is
+            return IsImported(_repository.FindByDownloadId(clientId, downloadId));
+        }
+
+        private static bool IsImported(List<DownloadHistory> events)
+        {
+            // A newer grab restarts this download. A typed older grab can only be
+            // settled by a completion retaining its saved assignment and revision.
+            var latest = events.FirstOrDefault(h => h.EventType is
                 DownloadHistoryEventType.DownloadGrabbed or DownloadHistoryEventType.DownloadImported);
-            return latest?.EventType == DownloadHistoryEventType.DownloadImported;
+            if (latest?.EventType != DownloadHistoryEventType.DownloadImported)
+            {
+                return false;
+            }
+
+            var grab = events.FirstOrDefault(h => h.EventType == DownloadHistoryEventType.DownloadGrabbed);
+            return grab?.MovieEditionId == null || (latest.MovieId == grab.MovieId &&
+                latest.MovieEditionId == grab.MovieEditionId && latest.EditionRuleRevision == grab.EditionRuleRevision);
         }
 
         public void Handle(MovieGrabbedEvent message)

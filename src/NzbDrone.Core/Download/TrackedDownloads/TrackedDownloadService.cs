@@ -174,7 +174,8 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                     (downloadGrab.DownloadClientId != downloadClient.Id ||
                      (downloadHistory != null && (downloadHistory.DownloadClientId != downloadClient.Id ||
                          downloadHistory.MovieId != downloadGrab.MovieId ||
-                         (downloadHistory.MovieEditionId.HasValue && downloadHistory.MovieEditionId != downloadGrab.MovieEditionId)))))
+                         downloadHistory.MovieEditionId != downloadGrab.MovieEditionId ||
+                         downloadHistory.EditionRuleRevision != downloadGrab.EditionRuleRevision))))
                 {
                     trackedDownload.EditionRecoveryError = "Persisted edition history is inconsistent or belongs to another download client; manual review required.";
                     trackedDownload.State = TrackedDownloadState.ImportBlocked;

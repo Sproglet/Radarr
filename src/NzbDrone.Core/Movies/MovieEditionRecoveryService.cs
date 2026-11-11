@@ -77,9 +77,10 @@ namespace NzbDrone.Core.Movies
                 throw new InvalidOperationException("Recovery grab records belong to different downloads.");
             }
 
-            if (grab?.MovieEditionId != null && downloadGrab?.MovieEditionId != null && grab.MovieEditionId != downloadGrab.MovieEditionId)
+            if (grab?.MovieEditionId != null && downloadGrab?.MovieEditionId != null &&
+                (grab.MovieEditionId != downloadGrab.MovieEditionId || grab.EditionRuleRevision != downloadGrab.EditionRuleRevision))
             {
-                throw new InvalidOperationException("Recovery grab records disagree about the edition. Review the download manually.");
+                throw new InvalidOperationException("Recovery grab records disagree about the edition or saved rule revision. Review the download manually.");
             }
 
             var editionId = grab?.MovieEditionId ?? downloadGrab?.MovieEditionId;

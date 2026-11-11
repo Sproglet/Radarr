@@ -532,6 +532,58 @@ namespace NzbDrone.Core.Test.MovieTests
         }
 
         [Test]
+        public void mismatched_or_unassigned_terminal_record_cannot_settle_a_typed_grab(
+            [Values(DownloadHistoryEventType.DownloadImported, DownloadHistoryEventType.DownloadFailed, DownloadHistoryEventType.DownloadIgnored)] DownloadHistoryEventType eventType,
+            [Values("movie", "target", "unassigned", "revision", "unknown-revision")] string mismatch)
+        {
+            Grab(_directors, "synthetic-shared");
+            var grab = _downloads.GetLatestGrab(9, "synthetic-shared");
+            var terminal = new DownloadHistory
+            {
+                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision,
+                SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 9, DownloadId = grab.DownloadId, Date = grab.Date.AddMinutes(1), EventType = eventType
+            };
+            if (mismatch == "movie") terminal.MovieId += 999;
+            if (mismatch == "target") terminal.MovieEditionId = _imax.Id;
+            if (mismatch == "unassigned") terminal.MovieEditionId = null;
+            if (mismatch == "revision") terminal.EditionRuleRevision++;
+            if (mismatch == "unknown-revision") terminal.EditionRuleRevision = null;
+            Mocker.Resolve<DownloadHistoryRepository>().Insert(terminal);
+
+            var tracked = Track(ColdService(), "synthetic-shared");
+
+            tracked.State.Should().Be(TrackedDownloadState.ImportBlocked);
+            tracked.EditionRecoveryError.Should().Contain("inconsistent");
+            _downloads.DownloadAlreadyImported(9, "synthetic-shared").Should().BeFalse();
+            _downloads.DownloadAlreadyImported("synthetic-shared").Should().BeFalse();
+            _editions.Get(_directors.Id).RuleRevision.Should().Be(grab.EditionRuleRevision);
+        }
+
+        [TestCase(DownloadHistoryEventType.DownloadImported, TrackedDownloadState.Imported)]
+        [TestCase(DownloadHistoryEventType.DownloadFailed, TrackedDownloadState.Failed)]
+        [TestCase(DownloadHistoryEventType.DownloadIgnored, TrackedDownloadState.Ignored)]
+        public void matching_terminal_keeps_saved_assignment_after_rule_edits(DownloadHistoryEventType eventType, TrackedDownloadState state)
+        {
+            Grab(_directors, "synthetic-shared");
+            var grab = _downloads.GetLatestGrab(9, "synthetic-shared");
+            _directors.MatchRules.Add("ChangedSyntheticGroup$");
+            _editions.Update(_directors);
+            Mocker.Resolve<DownloadHistoryRepository>().Insert(new DownloadHistory
+            {
+                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision,
+                SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 9, DownloadId = grab.DownloadId, Date = grab.Date.AddMinutes(1), EventType = eventType
+            });
+
+            var tracked = Track(ColdService(), "synthetic-shared");
+
+            tracked.EditionRecoveryError.Should().BeNull();
+            tracked.State.Should().Be(state);
+            tracked.RemoteMovie.EditionContext.Edition.Id.Should().Be(_directors.Id);
+            _downloads.DownloadAlreadyImported(9, "synthetic-shared").Should().Be(eventType == DownloadHistoryEventType.DownloadImported);
+            _editions.Get(_directors.Id).RuleRevision.Should().Be(grab.EditionRuleRevision + 1);
+        }
+
+        [Test]
         public void completing_one_client_does_not_complete_other_clients_same_id()
         {
             Grab(_directors, "synthetic-shared");
