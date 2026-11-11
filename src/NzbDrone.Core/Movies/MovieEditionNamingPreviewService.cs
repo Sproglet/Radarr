@@ -27,6 +27,7 @@ namespace NzbDrone.Core.Movies
         public bool NamingValid => Rejections.Count == 0 && Samples.Count > 0;
         public bool CreationEnabled => NamingValid && ProposedEdition?.Id == 0;
         public bool EditingEnabled => NamingValid && ProposedEdition?.Id > 0;
+        public EditionClassification SampleClassification { get; set; }
     }
 
     public interface IMovieEditionNamingPreviewService
@@ -119,6 +120,17 @@ namespace NzbDrone.Core.Movies
             };
             var config = _naming.GetConfig();
             var result = new MovieEditionNamingPreview { ProposedEdition = proposed, NamingFormat = config.StandardMovieFormat };
+            if (editing)
+            {
+                try
+                {
+                    proposed.RuleRevision = MovieEditionDefinitionChange.NextRuleRevision(original, proposed);
+                }
+                catch (OverflowException)
+                {
+                    result.Rejections.Add("The edition rule revision cannot advance. Repair its stored revision before changing classification.");
+                }
+            }
             if (editions.Any(e => e.Id != proposed.Id && string.Equals(e.Name, proposed.Name, StringComparison.OrdinalIgnoreCase)))
             {
                 result.Rejections.Add("An edition with this name already exists for the movie.");

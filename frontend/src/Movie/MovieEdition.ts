@@ -35,6 +35,13 @@ export interface EditionNamingPreview {
   namingValid: boolean;
   creationEnabled: boolean;
   editingEnabled?: boolean;
+  sampleClassification?: {
+    status: 'matched' | 'unconfigured' | 'ambiguous' | 'invalid';
+    candidateEditionIds: number[];
+    attributes: Record<string, string>;
+    ruleRevision?: number;
+    reason: string;
+  };
   rejections: string[];
   samples: { movieEditionId?: number; name: string; relativePath: string }[];
 }

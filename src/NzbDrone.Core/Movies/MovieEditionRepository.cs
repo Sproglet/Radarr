@@ -193,10 +193,7 @@ namespace NzbDrone.Core.Movies
                 throw new InvalidOperationException("Repair the edition's current-file ownership before editing its definition.");
             }
 
-            var classificationChanged = !(target.MatchRules ?? new()).SequenceEqual(proposed.MatchRules) ||
-                (target.Attributes ?? new()).Count != proposed.Attributes.Count ||
-                (target.Attributes ?? new()).Any(a => !proposed.Attributes.TryGetValue(a.Key, out var value) || value != a.Value);
-            target.RuleRevision = classificationChanged ? checked(target.RuleRevision + 1) : target.RuleRevision;
+            target.RuleRevision = MovieEditionDefinitionChange.NextRuleRevision(target, proposed);
             target.Name = proposed.Name.Trim();
             target.Attributes = proposed.Attributes;
             target.MatchRules = proposed.MatchRules;

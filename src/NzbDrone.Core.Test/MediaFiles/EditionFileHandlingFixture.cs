@@ -166,6 +166,7 @@ namespace NzbDrone.Core.Test.MediaFiles
         private MovieEditionManagementService DefinitionManagement()
         {
             Mocker.SetConstant<IMovieEditionNamingPreviewService>(Mocker.Resolve<MovieEditionNamingPreviewService>());
+            Mocker.SetConstant<IMovieEditionClassifier>(Mocker.Resolve<MovieEditionClassifier>());
             return Mocker.Resolve<MovieEditionManagementService>();
         }
 
@@ -219,6 +220,26 @@ namespace NzbDrone.Core.Test.MediaFiles
             management.PreviewDefinition(request).EditingEnabled.Should().BeTrue();
             management.SetDefinition(request).MovieFileId.Should().Be(request.ExpectedMovieFileId);
             Db.All<SubtitleFile>().Should().HaveCount(2);
+            _recycled.Should().BeEmpty();
+        }
+
+        [Test]
+        public void definition_preview_classifies_the_proposed_revision_without_writing_it_or_the_files()
+        {
+            ManualImport(_imax, "SyntheticDefinitionImax");
+            ManualImport(_directors, "SyntheticDefinitionDirectors");
+            var request = Definition();
+            request.MatchRules.Add("SyntheticCollector");
+            request.SampleTitle = "Synthetic.Lunar.Voyage.2026.SyntheticCollector.1080p.BluRay-SyntheticGroup";
+            var before = Db.All<MovieEdition>();
+            var files = Db.All<MovieFile>();
+            var result = DefinitionManagement().PreviewDefinition(request);
+            result.EditingEnabled.Should().BeTrue();
+            result.SampleClassification.Status.Should().Be(EditionClassificationStatus.Matched);
+            result.SampleClassification.CandidateEditionIds.Should().Equal(_directors.Id);
+            result.SampleClassification.RuleRevision.Should().Be(request.ExpectedRuleRevision + 1);
+            Db.All<MovieEdition>().Should().BeEquivalentTo(before);
+            Db.All<MovieFile>().Should().BeEquivalentTo(files);
             _recycled.Should().BeEmpty();
         }
 

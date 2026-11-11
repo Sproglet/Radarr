@@ -13,6 +13,7 @@ namespace Radarr.Api.V3.MovieEditions
         public Dictionary<string, string> Attributes { get; set; }
         [JsonRequired]
         public List<string> MatchRules { get; set; }
+        public string SampleTitle { get; set; }
         [JsonRequired]
         public bool ExpectedMovieMonitored { get; set; }
         [JsonRequired]
@@ -28,7 +29,7 @@ namespace Radarr.Api.V3.MovieEditions
 
         public MovieEditionDefinitionChange ToChange(int editionId) => new()
         {
-            MovieId = MovieId, EditionId = editionId, Name = Name, Attributes = Attributes, MatchRules = MatchRules,
+            MovieId = MovieId, EditionId = editionId, Name = Name, Attributes = Attributes, MatchRules = MatchRules, SampleTitle = SampleTitle,
             ExpectedMovieMonitored = ExpectedMovieMonitored, ExpectedEditionMonitored = ExpectedEditionMonitored,
             ExpectedMovieFileId = ExpectedMovieFileId, ExpectedQualityProfileId = ExpectedQualityProfileId,
             ExpectedRuleRevision = ExpectedRuleRevision, ExpectedName = ExpectedName

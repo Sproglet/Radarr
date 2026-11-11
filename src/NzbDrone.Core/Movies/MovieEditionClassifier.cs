@@ -27,6 +27,7 @@ namespace NzbDrone.Core.Movies
     public interface IMovieEditionClassifier
     {
         EditionClassification Classify(int movieId, string releaseTitle, string parsedLabel, string presentationEvidence, int? explicitEditionId = null);
+        EditionClassification ClassifyProposed(MovieEdition proposal, string releaseTitle);
     }
 
     // Read-only classification. Does not assign files, change monitoring or authorize a grab.
@@ -70,8 +71,52 @@ namespace NzbDrone.Core.Movies
 
         public EditionClassification Classify(int movieId, string releaseTitle, string parsedLabel, string presentationEvidence, int? explicitEditionId = null)
         {
-            var result = new EditionClassification { ParsedLabel = parsedLabel };
             var editions = _editions.GetByMovie(movieId);
+            return Classify(movieId, releaseTitle, parsedLabel, presentationEvidence, explicitEditionId, editions);
+        }
+
+        // Evaluate a detached definition against the current catalogue without saving
+        // rules, reassigning existing work, or using monitoring as a classifier.
+        public EditionClassification ClassifyProposed(MovieEdition proposal, string releaseTitle)
+        {
+            var invalid = new EditionClassification { Status = EditionClassificationStatus.Invalid };
+            if (proposal == null || proposal.MovieId <= 0 || proposal.Id <= 0 || proposal.Attributes == null || string.IsNullOrWhiteSpace(releaseTitle) || releaseTitle.Length > 16384)
+            {
+                invalid.Reason = "Select an existing edition and provide a sample release title of up to 16384 characters.";
+                return invalid;
+            }
+
+            var editions = _editions.GetByMovie(proposal.MovieId);
+            if (!editions.Any(e => e.Id == proposal.Id && e.MovieId == proposal.MovieId))
+            {
+                invalid.Reason = "The proposed edition does not belong to this movie.";
+                return invalid;
+            }
+
+            try
+            {
+                var parsed = Parser.Parser.ParseMovieTitle(releaseTitle);
+                var evidence = MovieEditionEvidence.FromParsed(parsed);
+                if (!evidence.Valid)
+                {
+                    invalid.Reason = "Parser evidence is unavailable; review the sample release manually.";
+                    return invalid;
+                }
+
+                return Classify(proposal.MovieId, releaseTitle, evidence.Label, evidence.Presentation, null,
+                    editions.Select(e => e.Id == proposal.Id ? proposal : e).ToList());
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                invalid.Reason = "Sample parsing exceeded its matching time limit.";
+                return invalid;
+            }
+        }
+
+        private static EditionClassification Classify(int movieId, string releaseTitle, string parsedLabel, string presentationEvidence,
+            int? explicitEditionId, List<MovieEdition> editions)
+        {
+            var result = new EditionClassification { ParsedLabel = parsedLabel };
             if (explicitEditionId.HasValue)
             {
                 var target = editions.SingleOrDefault(e => e.Id == explicitEditionId && e.MovieId == movieId);

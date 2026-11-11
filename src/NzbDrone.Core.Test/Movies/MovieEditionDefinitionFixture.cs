@@ -99,15 +99,18 @@ namespace NzbDrone.Core.Test.MovieTests
         [TestCase("rules")]
         [TestCase("attributes")]
         [TestCase("both")]
+        [TestCase("attribute-key-case")]
         [TestCase("unchanged")]
         public void increments_revision_once_only_for_classification_changes(string kind)
         {
             var request = Change();
             if (kind is "rules" or "both") request.MatchRules.Add("SyntheticGroup$");
             if (kind is "attributes" or "both") request.Attributes["branding"] = "Synthetic Collector";
+            if (kind == "attribute-key-case") { request.Attributes.Remove("cut"); request.Attributes["CUT"] = "directors-cut"; }
             var saved = Subject.SetDefinition(request, Proposed(request), _movie, Subject.GetByMovie(_movie.Id));
             saved.RuleRevision.Should().Be(_target.RuleRevision + (kind == "unchanged" ? 0 : 1));
-            saved.Attributes.Should().Contain("cut", "directors-cut").And.Contain("stereoscopic", "3d");
+            saved.Attributes.Should().BeEquivalentTo(request.Attributes);
+            saved.Attributes.Should().Contain("stereoscopic", "3d");
             saved.MatchRules.Should().BeEquivalentTo(request.MatchRules);
         }
 

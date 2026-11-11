@@ -28,9 +28,10 @@ namespace NzbDrone.Core.Movies
         private readonly IDiskProvider _disk;
         private readonly IEventAggregator _events;
         private readonly IMovieEditionContextService _contexts;
+        private readonly IMovieEditionClassifier _classifier;
 
         public MovieEditionManagementService(IMovieRepository movies, IMovieEditionRepository editions,
-            IMovieEditionNamingPreviewService preview, IEditionFilePathGuard paths, IDiskProvider disk, IEventAggregator events, IMovieEditionContextService contexts)
+            IMovieEditionNamingPreviewService preview, IEditionFilePathGuard paths, IDiskProvider disk, IEventAggregator events, IMovieEditionContextService contexts, IMovieEditionClassifier classifier)
         {
             _movies = movies;
             _editions = editions;
@@ -39,6 +40,7 @@ namespace NzbDrone.Core.Movies
             _disk = disk;
             _events = events;
             _contexts = contexts;
+            _classifier = classifier;
         }
 
         public MovieEdition SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId)
@@ -192,7 +194,7 @@ namespace NzbDrone.Core.Movies
         private static void ValidateDefinitionRequest(MovieEditionDefinitionChange change)
         {
             if (change == null || change.MovieId <= 0 || change.EditionId <= 0 || change.ExpectedName == null ||
-                change.Attributes == null || change.MatchRules == null)
+                change.Attributes == null || change.MatchRules == null || change.SampleTitle?.Length > 16384)
             {
                 throw new ArgumentException("Provide a movie and edition, name, full attributes/rules and complete expected state.");
             }
@@ -222,6 +224,10 @@ namespace NzbDrone.Core.Movies
                 Id = target.Id, MovieId = movie.Id, Name = change.Name, QualityProfileId = target.QualityProfileId,
                 Attributes = change.Attributes, MatchRules = change.MatchRules
             });
+            if (!string.IsNullOrWhiteSpace(change.SampleTitle))
+            {
+                preview.SampleClassification = _classifier.ClassifyProposed(preview.ProposedEdition, change.SampleTitle);
+            }
             if (!preview.NamingValid)
             {
                 return preview;

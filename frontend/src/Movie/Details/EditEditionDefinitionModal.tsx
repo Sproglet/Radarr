@@ -43,6 +43,13 @@ const columns = [
   { name: 'path', label: () => translate('File'), isVisible: true },
 ];
 
+const classificationLabels = {
+  matched: 'EditionSampleMatched',
+  unconfigured: 'EditionSampleUnconfigured',
+  ambiguous: 'EditionSampleAmbiguous',
+  invalid: 'EditionSampleInvalid',
+};
+
 function EditEditionDefinitionModal({
   selection,
   onSaved,
@@ -60,6 +67,7 @@ function EditEditionDefinitionModal({
     (selection.target.matchRules ?? []).join('\n')
   );
   const [preview, setPreview] = useState<EditionNamingPreview>();
+  const [sampleTitle, setSampleTitle] = useState('');
   const [previewRequest, setPreviewRequest] = useState<object>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState<'preview' | 'save'>();
@@ -69,6 +77,7 @@ function EditEditionDefinitionModal({
       name,
       attributes: Object.fromEntries(attributes.map((a) => [a.key, a.value])),
       matchRules: rules.split('\n').filter((rule) => rule.trim()),
+      sampleTitle,
       expectedMovieMonitored: selection.movieMonitored,
       expectedEditionMonitored: selection.target.monitored,
       expectedMovieFileId: selection.target.movieFileId ?? null,
@@ -76,7 +85,7 @@ function EditEditionDefinitionModal({
       expectedRuleRevision: selection.target.ruleRevision,
       expectedName: selection.target.name,
     }),
-    [selection, name, attributes, rules]
+    [selection, name, attributes, rules, sampleTitle]
   );
   const attributesValid =
     attributes.every((a) => a.key.trim() && a.value.trim()) &&
@@ -112,6 +121,13 @@ function EditEditionDefinitionModal({
   const onCancel = useCallback(() => {
     if (!busy) onClose();
   }, [busy, onClose]);
+  const onSampleChange = useCallback(
+    ({ value }: { value: string }) => {
+      setSampleTitle(value);
+      invalidate();
+    },
+    [invalidate]
+  );
   const reportError = useCallback(
     (requestError: unknown) => {
       setPreview(undefined);
@@ -203,6 +219,16 @@ function EditEditionDefinitionModal({
                 onChange={onRulesChange}
               />
             </FormGroup>
+            <FormGroup>
+              <FormLabel>{translate('EditionSampleTitle')}</FormLabel>
+              <FormInputGroup
+                type={inputTypes.TEXT}
+                name="editionSampleTitle"
+                value={sampleTitle}
+                helpText={translate('EditionSampleTitleHelpText')}
+                onChange={onSampleChange}
+              />
+            </FormGroup>
           </fieldset>
           {attributesValid ? null : (
             <Alert kind={kinds.DANGER}>
@@ -223,6 +249,38 @@ function EditEditionDefinitionModal({
                   .map(([key, value]) => `${key}: ${value}`)
                   .join(', ')}
               </p>
+              {preview.sampleClassification ? (
+                <Alert
+                  kind={
+                    preview.sampleClassification.status === 'matched'
+                      ? kinds.INFO
+                      : kinds.WARNING
+                  }
+                >
+                  <strong>
+                    {translate(
+                      classificationLabels[preview.sampleClassification.status]
+                    )}
+                  </strong>
+                  <p>{preview.sampleClassification.reason}</p>
+                  {preview.sampleClassification.candidateEditionIds.length ? (
+                    <p>
+                      {translate('EditionSampleCandidates')}:{' '}
+                      {preview.sampleClassification.candidateEditionIds
+                        .map((id) => {
+                          const candidate = preview.samples.find(
+                            (sample) => sample.movieEditionId === id
+                          );
+                          return candidate ? `${candidate.name} (${id})` : id;
+                        })
+                        .join(', ')}
+                    </p>
+                  ) : null}
+                  {preview.sampleClassification.status === 'ambiguous' ? (
+                    <p>{translate('EditionSampleAmbiguityHelpText')}</p>
+                  ) : null}
+                </Alert>
+              ) : null}
               <Table columns={columns}>
                 <TableBody>
                   {preview.samples.map((sample) => (
@@ -245,7 +303,7 @@ function EditEditionDefinitionModal({
             isDisabled={!!busy || !name.trim() || !attributesValid}
             onPress={onPreview}
           >
-            {translate('PreviewEditionFiles')}
+            {translate('PreviewEditionDefinition')}
           </SpinnerButton>
           <SpinnerButton
             kind={kinds.PRIMARY}

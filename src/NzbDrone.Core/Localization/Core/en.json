@@ -2143,5 +2143,14 @@
     "EditEditionDefinition": "Edit Definition",
     "EditionDefinitionScopeHelpText": "Update this edition’s name, attributes and matching rules. Existing files and downloads keep their assignments. Use Rename separately to apply filename changes. Monitoring and quality profiles are changed separately.",
     "EditionDefinitionFailed": "Unable to update this edition definition. Review its state and try again.",
-    "EditionNormalizedAttributes": "Attributes after normalization"
+    "EditionNormalizedAttributes": "Attributes after normalization",
+    "PreviewEditionDefinition": "Preview Definition",
+    "EditionSampleTitle": "Sample Release Title",
+    "EditionSampleTitleHelpText": "Test how this movie’s proposed edition definitions classify a sample release title.",
+    "EditionSampleMatched": "Matched",
+    "EditionSampleUnconfigured": "Unconfigured",
+    "EditionSampleAmbiguous": "Ambiguous",
+    "EditionSampleInvalid": "Invalid sample",
+    "EditionSampleCandidates": "Matching editions",
+    "EditionSampleAmbiguityHelpText": "Make the matching rules exclusive, or choose an edition explicitly during manual import."
 }

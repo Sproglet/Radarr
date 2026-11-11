@@ -35,6 +35,68 @@ namespace NzbDrone.Core.Test.MovieTests
             return e;
         }
 
+        [TestCase("Synthetic.Lunar.Voyage.2026.1080p.BluRay-SyntheticGroup", 1)]
+        [TestCase("Synthetic.Lunar.Voyage.2026.3D.1080p.BluRay-SyntheticGroup", 3)]
+        [TestCase("Synthetic.Lunar.Voyage.2026.IMAX.1080p.BluRay-SyntheticGroup", 4)]
+        [TestCase("Synthetic.Lunar.Voyage.2026.Directors.Cut.3D.1080p.BluRay-SyntheticGroup", 5)]
+        [TestCase("Synthetic.IMAX.Voyage.2026.1080p.BluRay-SyntheticGroup", 1)]
+        [TestCase("Synthetic.Lunar.Voyage.2026.1080p.BluRay-SyntheticIMAXGroup", 1)]
+        public void definition_preview_uses_parser_evidence_for_complete_combinations_and_excludes_title_and_group_words(string title, int expected)
+        {
+            var proposal = Edition(2, "directors-cut");
+            proposal.Name = "Synthetic New Directors";
+            proposal.Monitored = false;
+            var result = Subject.ClassifyProposed(proposal, title);
+            result.Status.Should().Be(EditionClassificationStatus.Matched);
+            result.CandidateEditionIds.Should().Equal(expected);
+            _editions[1].Name.Should().BeNull();
+        }
+
+        [Test]
+        public void definition_preview_replaces_one_target_without_persisting_its_rules()
+        {
+            var proposal = Edition(2, "directors-cut");
+            proposal.MatchRules.Add("SyntheticCollector");
+            proposal.RuleRevision = 8;
+            var result = Subject.ClassifyProposed(proposal, "Synthetic.Lunar.Voyage.2026.SyntheticCollector.1080p.BluRay-SyntheticGroup");
+            result.Status.Should().Be(EditionClassificationStatus.Matched);
+            result.CandidateEditionIds.Should().Equal(2);
+            result.RuleRevision.Should().Be(8);
+            _editions[1].RuleRevision.Should().Be(7);
+            _editions[1].MatchRules.Should().BeEmpty();
+        }
+
+        [Test]
+        public void definition_preview_reports_overlapping_rules_independently_of_monitoring()
+        {
+            _editions[0].MatchRules.Add("SyntheticCollector");
+            _editions[0].Monitored = true;
+            var proposal = Edition(2, "directors-cut");
+            proposal.Monitored = false;
+            proposal.MatchRules.Add("SyntheticCollector");
+            var result = Subject.ClassifyProposed(proposal, "Synthetic.Lunar.Voyage.2026.SyntheticCollector.1080p.BluRay-SyntheticGroup");
+            result.Status.Should().Be(EditionClassificationStatus.Ambiguous);
+            result.CandidateEditionIds.Should().Equal(1, 2);
+            result.RuleRevision.Should().BeNull();
+        }
+
+        [TestCase("Synthetic.Lunar.Voyage.2026.Criterion.1080p.BluRay-SyntheticGroup", EditionClassificationStatus.Unconfigured)]
+        [TestCase("Synthetic.Lunar.Voyage.2026.3D.IMAX.1080p.BluRay-SyntheticGroup", EditionClassificationStatus.Unconfigured)]
+        [TestCase("Synthetic.Lunar.Voyage.2026.Directors.Cut.Theatrical.1080p.BluRay-SyntheticGroup", EditionClassificationStatus.Ambiguous)]
+        [TestCase("", EditionClassificationStatus.Invalid)]
+        [TestCase("???", EditionClassificationStatus.Invalid)]
+        public void definition_preview_keeps_unknown_conflicting_or_absent_evidence_diagnostic(string title, EditionClassificationStatus status)
+        {
+            Subject.ClassifyProposed(Edition(2, "directors-cut"), title).Status.Should().Be(status);
+        }
+
+        [Test]
+        public void definition_preview_rejects_foreign_or_oversized_input()
+        {
+            Subject.ClassifyProposed(Edition(99, "directors-cut"), "Synthetic.Lunar.Voyage.2026.1080p.BluRay-SyntheticGroup").Status.Should().Be(EditionClassificationStatus.Invalid);
+            Subject.ClassifyProposed(Edition(2, "directors-cut"), new string('a', 16385)).Status.Should().Be(EditionClassificationStatus.Invalid);
+        }
+
         [TestCase(null, "", 1)]
         [TestCase("Director's Cut", "", 2)]
         [TestCase(null, "3D", 3)]

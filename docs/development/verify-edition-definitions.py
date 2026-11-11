@@ -39,18 +39,43 @@ def rejected(eid, body, code, preview=False):
         raise AssertionError("Invalid or stale definitions must reject")
 
 
+def sample_previews(empty):
+    original = {table: p.rows(table) for table in ["Movies", "MovieEditions", "MovieFiles", "SubtitleFiles", "History", "DownloadHistory"]}
+    cases = [
+        ("IMAX.", "matched", [1]), ("Directors.Cut.3D.", "matched", [2]),
+        ("", "unconfigured", []), ("Criterion.", "unconfigured", []),
+        ("3D.IMAX.", "unconfigured", []), ("Directors.Cut.Theatrical.", "ambiguous", []),
+    ]
+    for label, status, candidates in cases:
+        body = request(2, sampleTitle="Synthetic.Lunar.Voyage.2026." + label + "1080p.BluRay-SyntheticGroup")
+        result = p.api(endpoint(2, True), body)["sampleClassification"]
+        assert result["status"] == status and result["candidateEditionIds"] == candidates, result
+    assert p.api(endpoint(2, True), request(2, sampleTitle="???"))["sampleClassification"]["status"] == "invalid"
+    body = request(2, matchRules=["SyntheticOverlap"], sampleTitle="Synthetic.Lunar.Voyage.2026.SyntheticOverlap.1080p.BluRay-SyntheticGroup")
+    result = p.api(endpoint(2, True), body)["sampleClassification"]
+    assert result["status"] == "ambiguous" and result["candidateEditionIds"] == [2, empty["id"]]
+    body = request(2, matchRules=["SyntheticUnique"], sampleTitle="Synthetic.Lunar.Voyage.2026.SyntheticUnique.1080p.BluRay-SyntheticGroup")
+    result = p.api(endpoint(2, True), body)["sampleClassification"]
+    assert result["status"] == "matched" and result["candidateEditionIds"] == [2]
+    assert result["ruleRevision"] == body["expectedRuleRevision"] + 1
+    rejected(2, request(2, sampleTitle="a" * 16385), 400, True)
+    assert original == {table: p.rows(table) for table in original}
+    print("PASS: sample previews classify parsed combined/unknown/conflicting labels and proposed overlapping/unique rules without storing changes; proposed revision is shown and oversized samples reject", flush=True)
+
+
 def run(postgres, browser=False):
     if postgres:
         p.DATABASE.enable_postgres()
     p.run()
     secondary = c.configure_profiles()["id"]
     empty = p.api("api/v3/movieedition", {"movieId": 1, "name": "Synthetic Definition Collector",
-        "attributes": {"branding": "Synthetic Definition Collector"}})
+        "attributes": {"branding": "Synthetic Definition Collector"}, "matchRules": ["SyntheticOverlap"]})
     clients = [c.SyntheticSab(1), c.SyntheticSab(2)]
     c.SERVERS.extend(clients)
     p.stop()
     c.seed(clients, secondary)
     p.start()
+    sample_previews(empty)
     if browser:
         before_browser = {table: p.rows(table) for table in ["Movies", "MovieFiles", "SubtitleFiles", "History", "DownloadHistory"]}
         before_browser_media = p.snapshot()

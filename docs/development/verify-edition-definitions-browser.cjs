@@ -55,7 +55,7 @@ const headers = { 'X-Api-Key': '11112222333344445555666677778888' };
     };
     const preview = async (eid, status = 200) => {
       const pending = responseFor(eid, true);
-      await modal.getByRole('button', { name: 'Preview Filenames', exact: true }).click();
+      await modal.getByRole('button', { name: 'Preview Definition', exact: true }).click();
       const response = await pending;
       assert.equal(response.status(), status, await response.text());
       return response.json();
@@ -76,6 +76,26 @@ const headers = { 'X-Api-Key': '11112222333344445555666677778888' };
 
     await open(2);
     assert.ok((await modal.innerText()).includes('Use Rename separately'));
+    const sample = () => modal.locator('input[name="editionSampleTitle"]');
+    await sample().fill('Synthetic.Lunar.Voyage.2026.IMAX.1080p.BluRay-SyntheticGroup');
+    let classification = (await preview(2)).sampleClassification;
+    assert.equal(classification.status, 'matched');
+    assert.deepEqual(classification.candidateEditionIds, [1]);
+    assert.ok((await modal.innerText()).includes('Theatrical IMAX (1)'));
+    await sample().fill('Synthetic.Lunar.Voyage.2026.1080p.BluRay-SyntheticGroup');
+    assert.equal(await save().isDisabled(), true);
+    classification = (await preview(2)).sampleClassification;
+    assert.equal(classification.status, 'unconfigured');
+    await sample().fill('???');
+    classification = (await preview(2)).sampleClassification;
+    assert.equal(classification.status, 'invalid');
+    await rules().fill('SyntheticOverlap');
+    await sample().fill('Synthetic.Lunar.Voyage.2026.SyntheticOverlap.1080p.BluRay-SyntheticGroup');
+    classification = (await preview(2)).sampleClassification;
+    assert.equal(classification.status, 'ambiguous');
+    assert.deepEqual(classification.candidateEditionIds, [2, emptyId]);
+    assert.ok((await modal.innerText()).includes('Make the matching rules exclusive'));
+    await sample().fill('');
     await input().fill('Synthetic Cancelled Definition');
     await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
     assert.deepEqual(await api('movieedition?movieId=1'), before);
@@ -178,7 +198,7 @@ const headers = { 'X-Api-Key': '11112222333344445555666677778888' };
     assert.equal(finalMovie.qualityProfileId, beforeMovie.qualityProfileId);
     assert.equal(finalMovie.movieFileId, beforeMovie.movieFileId);
     assert.deepEqual(errors, []);
-    console.log('PASS: actual definition editor handles cancel, invalid rules/duplicate labels, preview invalidation/failure, stale target/master, post-preview disk collisions, combined attributes and independent primary/secondary/empty edits without moving files');
+    console.log('PASS: actual definition editor shows read-only sample matching/unconfigured/ambiguity and handles cancel, invalid rules/duplicate labels, preview invalidation/failure, stale target/master, post-preview disk collisions, combined attributes and independent primary/secondary/empty edits without moving files');
   } finally {
     await browser.close();
   }
