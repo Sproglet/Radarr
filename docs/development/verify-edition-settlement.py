@@ -1,6 +1,6 @@
 """Validate terminal identity using disposable databases, HTTP clients and media.
 
-Run in the externally offline SDK runner, with optional --postgres. All malformed
+Run in the externally offline SDK runner, with optional --postgres/--history-only. All malformed
 records are offline synthetic fixtures; this never opens a production database.
 """
 
@@ -30,7 +30,7 @@ def blocked(media, other_id):
     assert p.snapshot() == media
 
 
-def run(postgres):
+def run(postgres, history_only=False):
     if postgres:
         p.DATABASE.enable_postgres()
     p.run()
@@ -43,7 +43,11 @@ def run(postgres):
     grabs = [r for r in p.rows("DownloadHistory") if r["EventType"] == 1]
     first = next(r for r in grabs if r["DownloadClientId"] == 41)
     with p.database() as db:
+        if history_only:
+            db.execute('DELETE FROM "DownloadHistory" WHERE "Id"=?', (first["Id"],))
         db.execute('UPDATE "MovieEditions" SET "MatchRules"=?,"RuleRevision"="RuleRevision"+1', ('["ChangedSyntheticGroup$"]',))
+    grabs = [r for r in p.rows("DownloadHistory") if r["EventType"] == 1]
+    movie_grabs = [r for r in p.rows("History") if r["EventType"] == 1]
     p.start()
     initial = c.queue([1, 2])
     other_id = initial[2]["id"]
@@ -62,6 +66,7 @@ def run(postgres):
         p.start()
         blocked(media, other_id)
         assert [r for r in p.rows("DownloadHistory") if r["EventType"] == 1] == grabs
+        assert [r for r in p.rows("History") if r["EventType"] == 1] == movie_grabs
         p.stop()
         print("PASS: " + label + " completion remains blocked across restart, retains saved grabs and leaves the other client/edition and media intact", flush=True)
     with p.database() as db:
@@ -79,9 +84,9 @@ def run(postgres):
 
 if __name__ == "__main__":
     try:
-        if sys.argv[1:] not in ([], ["--postgres"]):
-            raise ValueError("Only --postgres is supported")
-        run(sys.argv[1:] == ["--postgres"])
+        if any(arg not in {"--postgres", "--history-only"} for arg in sys.argv[1:]) or len(set(sys.argv[1:])) != len(sys.argv[1:]):
+            raise ValueError("Only --postgres and --history-only are supported")
+        run("--postgres" in sys.argv[1:], "--history-only" in sys.argv[1:])
     finally:
         p.stop()
         try:

@@ -584,6 +584,87 @@ namespace NzbDrone.Core.Test.MovieTests
         }
 
         [Test]
+        public void history_only_typed_intent_requires_matching_terminal_identity(
+            [Values(DownloadHistoryEventType.DownloadImported, DownloadHistoryEventType.DownloadFailed, DownloadHistoryEventType.DownloadIgnored)] DownloadHistoryEventType eventType,
+            [Values("movie", "target", "unassigned", "revision", "unknown-revision", "matching")] string evidence)
+        {
+            Grab(_directors, "synthetic-shared");
+            var grab = _downloads.GetLatestGrab(9, "synthetic-shared");
+            Mocker.Resolve<DownloadHistoryRepository>().Delete(grab.Id);
+            _directors.MatchRules.Add("ChangedSyntheticGroup$");
+            _editions.Update(_directors);
+            var terminal = new DownloadHistory
+            {
+                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision,
+                SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 9, DownloadId = grab.DownloadId,
+                Date = grab.Date.AddMinutes(1), EventType = eventType
+            };
+            if (evidence == "movie") terminal.MovieId += 999;
+            if (evidence == "target") terminal.MovieEditionId = _imax.Id;
+            if (evidence == "unassigned") terminal.MovieEditionId = null;
+            if (evidence == "revision") terminal.EditionRuleRevision++;
+            if (evidence == "unknown-revision") terminal.EditionRuleRevision = null;
+            Mocker.Resolve<DownloadHistoryRepository>().Insert(terminal);
+
+            var tracked = Track(ColdService(), "synthetic-shared");
+
+            if (evidence == "matching")
+            {
+                tracked.EditionRecoveryError.Should().BeNull();
+                tracked.RemoteMovie.EditionContext.Edition.Id.Should().Be(_directors.Id);
+                tracked.State.Should().Be(eventType == DownloadHistoryEventType.DownloadImported ? TrackedDownloadState.Imported :
+                    eventType == DownloadHistoryEventType.DownloadFailed ? TrackedDownloadState.Failed : TrackedDownloadState.Ignored);
+            }
+            else
+            {
+                tracked.State.Should().Be(TrackedDownloadState.ImportBlocked);
+                tracked.EditionRecoveryError.Should().Contain("inconsistent");
+            }
+        }
+
+        [Test]
+        public void terminal_state_cannot_mask_conflicting_saved_grab_revisions(
+            [Values(DownloadHistoryEventType.DownloadImported, DownloadHistoryEventType.DownloadFailed, DownloadHistoryEventType.DownloadIgnored)] DownloadHistoryEventType eventType,
+            [Values(null, 999)] int? conflictingRevision)
+        {
+            Grab(_directors, "synthetic-shared");
+            var grab = _downloads.GetLatestGrab(9, "synthetic-shared");
+            var history = Mocker.Resolve<HistoryRepository>();
+            var record = history.FindByDownloadId(grab.DownloadId).Single();
+            record.EditionRuleRevision = conflictingRevision;
+            history.Update(record);
+            Mocker.Resolve<DownloadHistoryRepository>().Insert(new DownloadHistory
+            {
+                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision,
+                SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 9, DownloadId = grab.DownloadId,
+                Date = grab.Date.AddMinutes(1), EventType = eventType
+            });
+
+            var tracked = Track(ColdService(), "synthetic-shared");
+
+            tracked.State.Should().Be(TrackedDownloadState.ImportBlocked);
+            tracked.EditionRecoveryError.Should().Contain("inconsistent");
+        }
+
+        [TestCase(DownloadHistoryEventType.DownloadImported)]
+        [TestCase(DownloadHistoryEventType.DownloadFailed)]
+        [TestCase(DownloadHistoryEventType.DownloadIgnored)]
+        public void unassigned_terminal_cannot_hide_another_clients_typed_intent(DownloadHistoryEventType eventType)
+        {
+            Grab(_directors, "synthetic-shared");
+            Mocker.Resolve<DownloadHistoryRepository>().Insert(new DownloadHistory
+            {
+                MovieId = _movie.Id, SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 10, DownloadId = "synthetic-shared",
+                Date = DateTime.UtcNow.AddMinutes(1), EventType = eventType
+            });
+
+            var tracked = TrackOtherClient(ColdService(), "synthetic-shared");
+
+            tracked.State.Should().Be(TrackedDownloadState.ImportBlocked);
+            tracked.EditionRecoveryError.Should().Contain("another download client");
+        }
+
+        [Test]
         public void completing_one_client_does_not_complete_other_clients_same_id()
         {
             Grab(_directors, "synthetic-shared");

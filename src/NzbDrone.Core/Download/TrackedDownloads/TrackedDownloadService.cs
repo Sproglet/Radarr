@@ -160,7 +160,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                 var grabbedEvent = historyItems.FirstOrDefault(h => h.EventType == MovieHistoryEventType.Grabbed);
                 var downloadGrab = _downloadHistoryService.GetLatestGrab(downloadClient.Id, downloadItem.DownloadId) ??
                     (downloadHistory?.EventType == DownloadHistoryEventType.DownloadGrabbed ? downloadHistory : null);
-                if (downloadGrab == null && downloadHistory == null &&
+                if (downloadGrab?.MovieEditionId == null && grabbedEvent?.MovieEditionId == null &&
                     _historyService.FindByDownloadId(downloadItem.DownloadId)?.Any(h => h.MovieEditionId.HasValue) == true)
                 {
                     trackedDownload.EditionRecoveryError = "Typed grab belongs to another download client; manual review required.";
@@ -170,12 +170,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                     return trackedDownload;
                 }
 
-                if (downloadGrab?.MovieEditionId != null &&
-                    (downloadGrab.DownloadClientId != downloadClient.Id ||
-                     (downloadHistory != null && (downloadHistory.DownloadClientId != downloadClient.Id ||
-                         downloadHistory.MovieId != downloadGrab.MovieId ||
-                         downloadHistory.MovieEditionId != downloadGrab.MovieEditionId ||
-                         downloadHistory.EditionRuleRevision != downloadGrab.EditionRuleRevision))))
+                if (HasInconsistentEditionHistory(downloadClient.Id, grabbedEvent, downloadGrab, downloadHistory))
                 {
                     trackedDownload.EditionRecoveryError = "Persisted edition history is inconsistent or belongs to another download client; manual review required.";
                     trackedDownload.State = TrackedDownloadState.ImportBlocked;
@@ -327,6 +322,25 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             {
                 trackedDownload.IsTrackable = false;
             }
+        }
+
+        private static bool HasInconsistentEditionHistory(int clientId, MovieHistory movieGrab, DownloadHistory downloadGrab, DownloadHistory latest)
+        {
+            var editionId = downloadGrab?.MovieEditionId ?? movieGrab?.MovieEditionId;
+            if (!editionId.HasValue)
+            {
+                return false;
+            }
+
+            // Either durable grab stream can retain intent after a partial write.
+            // Validate agreement before a terminal state can suppress recovery errors.
+            var movieId = downloadGrab?.MovieEditionId != null ? downloadGrab.MovieId : movieGrab.MovieId;
+            var revision = downloadGrab?.MovieEditionId != null ? downloadGrab.EditionRuleRevision : movieGrab.EditionRuleRevision;
+            return (downloadGrab != null && (downloadGrab.DownloadClientId != clientId || downloadGrab.MovieId != movieId)) ||
+                (movieGrab != null && (movieGrab.MovieId != movieId ||
+                    (movieGrab.MovieEditionId.HasValue && (movieGrab.MovieEditionId != editionId || movieGrab.EditionRuleRevision != revision)))) ||
+                (latest != null && (latest.DownloadClientId != clientId || latest.MovieId != movieId ||
+                    latest.MovieEditionId != editionId || latest.EditionRuleRevision != revision));
         }
 
         private void LogItemChange(TrackedDownload trackedDownload, DownloadClientItem existingItem, DownloadClientItem downloadItem)
