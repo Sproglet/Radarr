@@ -74,7 +74,8 @@ namespace NzbDrone.Core.Test.Download
         public async Task adding_a_target_cannot_overtake_an_authorized_submission_during_an_async_wait()
         {
             _parseResult.Release.Title = "Synthetic.Voyage.2026.1080p.BluRay-SyntheticGroup";
-            var targets = new List<MovieEdition> { new() { Id = 1, MovieId = _parseResult.Movie.Id } };
+            var targets = new List<MovieEdition> { new() { Id = 1, MovieId = _parseResult.Movie.Id,
+                QualityProfileId = _parseResult.Movie.QualityProfileId, Monitored = _parseResult.Movie.Monitored } };
             Mocker.GetMock<IMovieEditionRepository>().Setup(r => r.GetByMovie(_parseResult.Movie.Id)).Returns(() => targets.ToList());
             Mocker.GetMock<IMovieRepository>().Setup(r => r.Find(_parseResult.Movie.Id)).Returns(_parseResult.Movie);
             var proposed = new MovieEdition { MovieId = _parseResult.Movie.Id, Name = "Synthetic New 3D" };
@@ -124,6 +125,24 @@ namespace NzbDrone.Core.Test.Download
                 callback.Wait(TimeSpan.FromSeconds(2)).Should().BeTrue();
             });
             await Subject.DownloadReport(_parseResult, null).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        [TestCase("profile")]
+        [TestCase("monitoring")]
+        [TestCase("attributes")]
+        [TestCase("rules")]
+        public void independently_managed_single_target_cannot_bypass_submission_guard(string preference)
+        {
+            _parseResult.Movie.Monitored = true;
+            var target = new MovieEdition { Id = 1, MovieId = _parseResult.Movie.Id, Monitored = true, QualityProfileId = _parseResult.Movie.QualityProfileId };
+            if (preference == "profile") target.QualityProfileId++;
+            if (preference == "monitoring") target.Monitored = false;
+            if (preference == "attributes") target.Attributes["cut"] = "theatrical";
+            if (preference == "rules") target.MatchRules.Add("SyntheticGroup$");
+            Mocker.GetMock<IMovieEditionRepository>().Setup(r => r.GetByMovie(_parseResult.Movie.Id)).Returns(new List<MovieEdition> { target });
+            Assert.ThrowsAsync<InvalidOperationException>(() => Subject.DownloadReport(_parseResult, null));
+            Mocker.GetMock<IProvideDownloadClient>().Verify(s => s.GetDownloadClient(It.IsAny<DownloadProtocol>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<HashSet<int>>()), Times.Never());
+            VerifyEventNotPublished<MovieGrabbedEvent>();
         }
 
         private Mock<IDownloadClient> WithUsenetClient()

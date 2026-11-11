@@ -105,7 +105,7 @@ namespace NzbDrone.Core.DecisionEngine
                                 _aggregationService.Augment(remoteMovie);
                             }
 
-                            if (remoteMovie.EditionContext != null || remoteMovie.EditionRecoveryError != null || _editions.GetByMovie(remoteMovie.Movie.Id)?.Count > 1)
+                            if (MovieEditionAcquisitionGuard.RequiresEditionContext(remoteMovie, _editions.GetByMovie(remoteMovie.Movie.Id)))
                             {
                                 remoteMovie.EditionEvaluation = isPending ? RecoveredEvaluation(remoteMovie) : _editionEvaluation.PreviewParsed(remoteMovie);
                                 remoteMovie.EditionContext = remoteMovie.EditionEvaluation.Context;

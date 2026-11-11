@@ -92,6 +92,41 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
             _pass1.Verify(p => p.IsSatisfiedBy(It.IsAny<RemoteMovie>(), It.IsAny<ReleaseDecisionInformation>()), Times.Never());
         }
 
+        [TestCase("profile", false)]
+        [TestCase("profile", true)]
+        [TestCase("monitoring", false)]
+        [TestCase("monitoring", true)]
+        [TestCase("attributes", false)]
+        [TestCase("attributes", true)]
+        [TestCase("rules", false)]
+        [TestCase("rules", true)]
+        public void managed_single_target_uses_gated_preview_before_legacy_specifications(string preference, bool search)
+        {
+            _reports[0].Title = "Synthetic.Voyage.2026.IMAX.1080p.BluRay-SyntheticGroup";
+            _remoteMovie.Movie.Monitored = true;
+            _remoteMovie.Movie.QualityProfileId = 1;
+            var target = new MovieEdition { Id = 1, MovieId = _remoteMovie.Movie.Id, Monitored = true, QualityProfileId = 1 };
+            if (preference == "profile") target.QualityProfileId = 7;
+            if (preference == "monitoring") target.Monitored = false;
+            if (preference == "attributes") target.Attributes["framing"] = "imax";
+            if (preference == "rules") target.MatchRules.Add("SyntheticGroup$");
+            Mocker.GetMock<IMovieEditionRepository>().Setup(r => r.GetByMovie(_remoteMovie.Movie.Id))
+                .Returns(new List<MovieEdition> { target });
+            Mocker.GetMock<IMovieEditionEvaluationService>().Setup(e => e.PreviewParsed(_remoteMovie)).Returns(new MovieEditionEvaluation
+            {
+                Classification = new EditionClassification { Status = EditionClassificationStatus.Unconfigured }
+            });
+            GivenSpecifications(_pass1);
+
+            var decisions = search ? Subject.GetSearchDecision(_reports, new MovieSearchCriteria()) : Subject.GetRssDecision(_reports);
+
+            var decision = decisions.Should().ContainSingle().Subject;
+            decision.RemoteMovie.DownloadAllowed.Should().BeFalse();
+            decision.RemoteMovie.EditionEvaluation.CustomFormatScore.Should().BeNull();
+            decision.Rejections.Should().Contain(r => r.Reason == DownloadRejectionReason.MultiEditionAcquisitionDisabled);
+            _pass1.Verify(p => p.IsSatisfiedBy(It.IsAny<RemoteMovie>(), It.IsAny<ReleaseDecisionInformation>()), Times.Never());
+        }
+
         [Test]
         public void edition_preview_reports_selected_profile_rejections_and_keeps_gate_closed()
         {

@@ -57,7 +57,7 @@ namespace NzbDrone.Core.Download
         public async Task DownloadReport(RemoteMovie remoteMovie, int? downloadClientId)
         {
             using var acquisition = remoteMovie.Movie == null ? null : await MovieEditionAcquisitionGate.AcquireAsync(remoteMovie.Movie.Id);
-            if (remoteMovie.EditionRecoveryError != null || remoteMovie.EditionContext != null || (remoteMovie.Movie != null && _editions.GetByMovie(remoteMovie.Movie.Id)?.Count > 1))
+            if (MovieEditionAcquisitionGuard.RequiresEditionContext(remoteMovie, remoteMovie.Movie == null ? null : _editions.GetByMovie(remoteMovie.Movie.Id)))
             {
                 throw new InvalidOperationException("Multi-edition acquisition is disabled. Import files with explicit edition assignments instead.");
             }
