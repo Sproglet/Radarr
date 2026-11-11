@@ -357,7 +357,14 @@ namespace Radarr.Api.V3.Queue
                 _failedDownloadService.MarkAsFailed(trackedDownload, skipRedownload);
             }
 
-            if (!removeFromClient && !blocklist && !changeCategory)
+            if (removeFromClient && !blocklist)
+            {
+                if (!_ignoredDownloadService.IgnoreRemovedDownload(trackedDownload))
+                {
+                    return null;
+                }
+            }
+            else if (!removeFromClient && !blocklist && !changeCategory)
             {
                 if (!_ignoredDownloadService.IgnoreDownload(trackedDownload))
                 {

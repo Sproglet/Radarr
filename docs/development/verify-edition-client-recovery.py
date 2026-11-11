@@ -1600,7 +1600,11 @@ def run():
         queue([])
         assert all(c.deleted and not c.rejected for c in clients)
         assert p.snapshot() == before
-        print("PASS: one HTTP bulk request removes both same-ID client entries independently and preserves media", flush=True)
+        settled = [row for row in p.rows("DownloadHistory") if row["EventType"] == 4 and row["DownloadId"] == SHARED]
+        assert {(row["DownloadClientId"], row["MovieEditionId"]) for row in settled} == {(41, 1), (42, 2)} and len(settled) == 2, settled
+        assert all(row["EditionRuleRevision"] == 1 for row in settled)
+        assert not any(command["name"] == "MoviesSearch" for command in p.api("api/v3/command"))
+        print("PASS: one HTTP bulk request removes and settles both same-ID client entries independently, retains saved revisions and preserves media without broad retries", flush=True)
         return
     if scenario == "failure":
         clients[0].mode = "failed"

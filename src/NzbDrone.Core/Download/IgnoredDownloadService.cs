@@ -11,6 +11,7 @@ namespace NzbDrone.Core.Download
     public interface IIgnoredDownloadService
     {
         bool IgnoreDownload(TrackedDownload trackedDownload);
+        bool IgnoreRemovedDownload(TrackedDownload trackedDownload);
     }
 
     public class IgnoredDownloadService : IIgnoredDownloadService
@@ -32,6 +33,19 @@ namespace NzbDrone.Core.Download
         }
 
         public bool IgnoreDownload(TrackedDownload trackedDownload)
+        {
+            return IgnoreDownload(trackedDownload, "Manually ignored");
+        }
+
+        // Called only after the client confirms removal. Legacy unassigned grabs
+        // retain their existing behavior; typed intent needs a terminal record.
+        public bool IgnoreRemovedDownload(TrackedDownload trackedDownload)
+        {
+            var grab = _history.GetLatestGrab(trackedDownload.DownloadClient, trackedDownload.DownloadItem.DownloadId);
+            return grab?.MovieEditionId == null || IgnoreDownload(trackedDownload, "Removed from download client");
+        }
+
+        private bool IgnoreDownload(TrackedDownload trackedDownload, string message)
         {
             var movie = trackedDownload.RemoteMovie?.Movie;
 
@@ -84,7 +98,7 @@ namespace NzbDrone.Core.Download
                 DownloadClientInfo = trackedDownload.DownloadItem.DownloadClientInfo,
                 DownloadId = trackedDownload.DownloadItem.DownloadId,
                 TrackedDownload = trackedDownload,
-                Message = "Manually ignored"
+                Message = message
             };
 
             _eventAggregator.PublishEvent(downloadIgnoredEvent);
