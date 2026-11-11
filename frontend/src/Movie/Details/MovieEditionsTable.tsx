@@ -19,6 +19,9 @@ import AddEditionModal from './AddEditionModal';
 import SelectPrimaryEditionModal, {
   PrimarySelection,
 } from './SelectPrimaryEditionModal';
+import SetEditionMonitoringModal, {
+  MonitoringSelection,
+} from './SetEditionMonitoringModal';
 
 const columns = [
   { name: 'name', label: () => translate('Edition'), isVisible: true },
@@ -42,6 +45,24 @@ interface MovieEditionsTableProps {
   qualityProfileId: number;
   monitored: boolean;
   statistics?: Statistics;
+}
+
+function EditionMonitoringButton({
+  edition,
+  onSelect,
+}: {
+  edition: MovieEdition;
+  onSelect(edition: MovieEdition): void;
+}) {
+  const onPress = useCallback(() => onSelect(edition), [edition, onSelect]);
+  return (
+    <Button
+      isDisabled={edition.state === 'invalid' && !edition.monitored}
+      onPress={onPress}
+    >
+      {translate(edition.monitored ? 'UnmonitorEdition' : 'MonitorEdition')}
+    </Button>
+  );
 }
 
 function PrimaryEditionButton({
@@ -71,6 +92,8 @@ function MovieEditionsTable({
   const files = useSelector((state: AppState) => state.movieFiles.items);
   const [isAdding, setIsAdding] = useState(false);
   const [primarySelection, setPrimarySelection] = useState<PrimarySelection>();
+  const [monitoringSelection, setMonitoringSelection] =
+    useState<MonitoringSelection>();
   const [selectionError, setSelectionError] = useState<string>();
   const { data, error, isPending, refetch } = useApiQuery<MovieEdition[]>({
     path: `/movieedition?movieId=${movieId}`,
@@ -92,13 +115,30 @@ function MovieEditionsTable({
     setSelectionError(undefined);
     onCreated();
   }, [onCreated]);
-  const onPrimaryError = useCallback(
+  const onActionError = useCallback(
     (message: string) => {
       setPrimarySelection(undefined);
+      setMonitoringSelection(undefined);
       setSelectionError(message);
       onCreated();
     },
     [onCreated]
+  );
+  const onMonitoringClose = useCallback(
+    () => setMonitoringSelection(undefined),
+    []
+  );
+  const onMonitoringSelected = useCallback(() => {
+    setMonitoringSelection(undefined);
+    setSelectionError(undefined);
+    onCreated();
+  }, [onCreated]);
+  const onMonitoringPress = useCallback(
+    (target: MovieEdition) => {
+      setSelectionError(undefined);
+      setMonitoringSelection({ target, movieMonitored: monitored });
+    },
+    [monitored]
   );
   const onPrimaryPress = useCallback(
     (target: MovieEdition) => {
@@ -163,6 +203,10 @@ function MovieEditionsTable({
                   )}
                 </TableRowCell>
                 <TableRowCell>
+                  <EditionMonitoringButton
+                    edition={edition}
+                    onSelect={onMonitoringPress}
+                  />
                   {edition.isPrimary ? null : (
                     <PrimaryEditionButton
                       edition={edition}
@@ -183,6 +227,7 @@ function MovieEditionsTable({
         <Alert>{translate('NoEditionsConfigured')}</Alert>
       ) : null}
       <p>{translate('PrimaryEditionHelpText')}</p>
+      <p>{translate('EditionMonitoringHelpText')}</p>
       <p>{translate('AddEditionHelpText')}</p>
       <Button isDisabled={!data || !!error} onPress={onAdd}>
         {translate('AddEdition')}
@@ -191,8 +236,15 @@ function MovieEditionsTable({
         movieId={movieId}
         selection={primarySelection}
         onSelected={onPrimarySelected}
-        onError={onPrimaryError}
+        onError={onActionError}
         onClose={onPrimaryClose}
+      />
+      <SetEditionMonitoringModal
+        movieId={movieId}
+        selection={monitoringSelection}
+        onSelected={onMonitoringSelected}
+        onError={onActionError}
+        onClose={onMonitoringClose}
       />
       <AddEditionModal
         isOpen={isAdding}

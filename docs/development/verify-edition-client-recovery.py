@@ -1272,7 +1272,7 @@ def monitoring_request(edition_id, monitored):
             "expectedName": edition["name"]}
 
 
-def verify_monitoring(edition_profile):
+def verify_monitoring(edition_profile, browser=False):
     before = p.snapshot()
     empty = p.api("api/v3/movieedition", {"movieId": 1, "name": "Synthetic Monitoring Collector 3D IMAX",
         "attributes": {"stereoscopic": "3d", "framing": "imax", "branding": "Synthetic Monitoring Collector"}})
@@ -1354,6 +1354,25 @@ def verify_monitoring(edition_profile):
     p.start()
     queue([1, 2])
     assert p.snapshot() == before and p.rows("History") == original["History"] and p.rows("DownloadHistory") == original["DownloadHistory"]
+    if browser:
+        damaged = [p.api("api/v3/movieedition", {"movieId": 1, "name": "Synthetic Invalid " + label,
+            "attributes": {"branding": "Synthetic Invalid " + label}}) for label in ["Inactive", "Active"]]
+        p.stop()
+        with p.database() as db:
+            for target in damaged:
+                db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=999999,"Monitored"=? WHERE "Id"=?',
+                           (target["id"] == damaged[1]["id"], target["id"]))
+        p.start()
+        configure_browser_auth()
+        subprocess.run(["node", "/src/docs/development/verify-edition-monitoring-browser.cjs"], check=True)
+        assert p.snapshot() == before and p.rows("History") == original["History"] and p.rows("DownloadHistory") == original["DownloadHistory"]
+        p.stop()
+        with p.database() as db:
+            for target in damaged:
+                db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=1 WHERE "Id"=?', (target["id"],))
+        p.start()
+        queue([1, 2])
+        assert p.snapshot() == before
     assert all(not client.deleted and not client.rejected for client in clients)
     assert not any(command["name"] == "MoviesSearch" for command in p.api("api/v3/command"))
     print("PASS: monitoring API requires fresh complete state, preserves the master switch/other targets and exposes correct wanted/statistics state across restart", flush=True)
@@ -1362,7 +1381,7 @@ def verify_monitoring(edition_profile):
 
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history", "edition-wanted", "edition-wanted-ui", "monitoring"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history", "edition-wanted", "edition-wanted-ui", "monitoring", "monitoring-ui"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -1382,6 +1401,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "monitoring-ui":
+        verify_monitoring(secondary["id"], True)
+        return
     if scenario == "monitoring":
         verify_monitoring(secondary["id"])
         return

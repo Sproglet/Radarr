@@ -1,4 +1,11 @@
 {
+  "MonitorEdition": "Monitor Edition",
+  "UnmonitorEdition": "Unmonitor Edition",
+  "MonitorEditionConfirm": "Enable monitoring for '{edition}'? Existing downloads continue. Automatic multi-edition downloads remain disabled.",
+  "UnmonitorEditionConfirm": "Disable monitoring for '{edition}'? Existing files and downloads are retained.",
+  "EditionMonitoringMasterOff": "Movie monitoring is off. This preference takes effect when movie monitoring is enabled.",
+  "EditionMonitoringHelpText": "Each edition has its own monitoring preference. Both movie and edition monitoring must be on for effective monitoring. Existing downloads continue when monitoring is disabled.",
+  "EditionMonitoringFailed": "Unable to change edition monitoring. Reload the movie and try again.",
   "EditionWanted": "Wanted Editions",
   "EditionWantedHelpText": "Monitoring requires both the movie and edition. Automatic multi-edition downloads remain disabled.",
   "EditionWantedCutoffHelpText": "Cutoff results compare quality only; custom-format cutoff is not included.",
