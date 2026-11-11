@@ -10,6 +10,8 @@ PostgreSQL uses offline native restoration. The browser restore UI is not tested
 """
 
 import importlib.util
+from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -29,6 +31,37 @@ TABLES = ["Movies", "MovieEditions", "MovieFiles", "SubtitleFiles", "QualityProf
 
 def stored():
     return {table: p.rows(table) for table in TABLES}
+
+
+def seed_pending(clients):
+    stamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    with p.database() as db:
+        # Disable scheduled RSS in this disposable configuration. Recovery reads
+        # pending intent; no indexer lookup or acquisition is needed for this test.
+        db.execute('DELETE FROM "Config" WHERE "Key"=?', ("rsssyncinterval",))
+        db.execute('INSERT INTO "Config" ("Key","Value") VALUES (?,?)', ("rsssyncinterval", "0"))
+        for eid, label, name in [(1, "Theatrical.IMAX", "Theatrical IMAX"), (2, "Directors.Cut.3D", "Directors Cut 3D")]:
+            title = "Synthetic.Pending.Lunar.Voyage.2026." + label + ".1080p.BluRay-SyntheticGroup"
+            parsed = {"movieTitles": ["Synthetic Lunar Voyage"], "originalTitle": title, "releaseTitle": title,
+                "simpleReleaseTitle": "A.Movie.2026." + label + ".1080p.BluRay-SyntheticGroup",
+                "quality": {"quality": 7, "revision": {"version": 1, "real": 0, "isRepack": False}},
+                "languages": [1], "releaseGroup": "SyntheticGroup", "year": 2026,
+                "edition": "IMAX" if eid == 1 else "Directors Cut"}
+            release = {"title": title, "guid": "synthetic-backup-pending-" + str(eid), "indexer": "Synthetic Indexer", "indexerId": 77,
+                "downloadProtocol": "usenet", "size": 104857600, "publishDate": stamp,
+                "downloadUrl": "http://127.0.0.1:" + str(clients[eid - 1].port) + "/synthetic-pending-never-download"}
+            additional = {"editionName": name, "movieMatchType": 0, "releaseSource": 1}
+            db.execute('''INSERT INTO "PendingReleases" ("MovieId","MovieEditionId","EditionRuleRevision","Title","Added","ParsedMovieInfo","Release","Reason","AdditionalInfo")
+                VALUES (1,?,1,?,?,?,?,0,?)''', (eid, title, stamp, json.dumps(parsed), json.dumps(release), json.dumps(additional)))
+
+
+def pending_queue():
+    records = p.api("api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true")["records"]
+    pending = [row for row in records if row["title"].startswith("Synthetic.Pending.")]
+    assert len(pending) == 2 and {row["movieEditionId"] for row in pending} == {1, 2}, pending
+    for row in pending:
+        assert row["customFormatScore"] == row["editionCustomFormatScore"] == {1: 11, 2: 77}[row["movieEditionId"]], row
+    return {row["movieEditionId"]: row["id"] for row in pending}
 
 
 def native(tool, database, *arguments):
@@ -74,17 +107,20 @@ def run(postgres):
         for eid in [1, 2, empty["id"]]:
             db.execute('UPDATE "MovieEditions" SET "LastSearchTime"=?,"MatchRules"=?,"RuleRevision"=? WHERE "Id"=?',
                        ("2026-11-11T09:00:00Z", '["SyntheticNoLongerMatches' + str(eid) + '$"]', 10 + eid, eid))
+    seed_pending(clients)
     p.start()
     p.api("api/v3/movieedition/2/monitoring", c.monitoring_request(2, True))
     p.api("api/v3/movieedition/2/primary", {"movieId": 1, "expectedPrimaryEditionId": 1,
         "expectedMovieFileId": p.snapshot()[2][0], "expectedQualityProfileId": secondary})
     before_queue = c.queue([1, 2])
+    before_pending = pending_queue()
     before_media = p.snapshot()
     before = stored()
     assert before["Movies"][0]["QualityProfileId"] == 1 and before["Movies"][0]["PrimaryEditionId"] == 2
     assert before["MovieEditions"][1]["QualityProfileId"] == secondary and before["MovieEditions"][1]["Monitored"]
     assert len([row for row in before["History"] if row.get("DownloadId") == c.SHARED]) == 2
     assert len(before["DownloadHistory"]) == 2
+    assert {(row["MovieEditionId"], row["EditionRuleRevision"]) for row in before["PendingReleases"]} == {(1, 1), (2, 1)}
 
     # Exercise the actual application backup command and list/download endpoints.
     p.command("Backup")
@@ -137,15 +173,18 @@ def run(postgres):
         p.start()
         assert stored() == before and p.snapshot() == before_media
         restored_queue = c.queue([1, 2])
+        assert pending_queue() == before_pending
         assert {eid: row["id"] for eid, row in restored_queue.items()} == {eid: row["id"] for eid, row in before_queue.items()}
         assert stored() == before
         for file in p.api("api/v3/moviefile?movieId=1"):
             assert file["customFormatScore"] == {1: 11, 2: 77}[file["movieEditionId"]]
         p.command("RescanMovie", movieId=1)
         p.command("Housekeeping")
+        assert pending_queue() == before_pending
         assert stored() == before and p.snapshot() == before_media
         print("PASS: fresh destination restores combined/custom attributes, rules/revisions, profiles, monitoring/search dates, primary projection, file/subtitle ownership and recorded client-qualified assignments", flush=True)
         print("PASS: both same-ID synthetic jobs recover with stable queue IDs and independent scores after restoration; scan/housekeeping preserve media bytes and IDs", flush=True)
+        print("PASS: nonempty pending releases restore assigned editions, original revisions/name snapshots and stable separate queue IDs/scores despite later rule edits, through startup/scan/housekeeping", flush=True)
         if not postgres:
             print("PASS: SQLite restore-upload stages the built-in archive and actual process startup applies it to the fresh configuration", flush=True)
 

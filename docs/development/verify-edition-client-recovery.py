@@ -133,7 +133,7 @@ def seed(clients, secondary_profile):
 def queue(expected, scores=None):
     p.command("RefreshMonitoredDownloads")
     result = p.api("api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true")["records"]
-    rows = [r for r in result if r["downloadId"] == SHARED]
+    rows = [r for r in result if r.get("downloadId") == SHARED]
     assert {r["downloadClientId"] for r in rows} == {40 + slot for slot in expected}, rows
     for row in rows:
         assert row["movieEditionId"] == row["downloadClientId"] - 40, row
