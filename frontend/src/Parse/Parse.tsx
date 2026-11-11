@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
+import React from 'react';
+import { useSelector } from 'react-redux';
 import TextInput from 'Components/Form/TextInput';
 import Icon from 'Components/Icon';
 import Button from 'Components/Link/Button';
@@ -7,49 +7,24 @@ import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
 import { icons } from 'Helpers/Props';
-import { clear, fetch } from 'Store/Actions/parseActions';
-import { InputChanged } from 'typings/inputs';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
+import ParseEditionSelector from './ParseEditionSelector';
 import ParseResult from './ParseResult';
 import parseStateSelector from './parseStateSelector';
+import useParseInput from './useParseInput';
 import styles from './Parse.css';
 
 function Parse() {
   const { isFetching, error, item } = useSelector(parseStateSelector());
 
-  const [title, setTitle] = useState('');
-  const dispatch = useDispatch();
-
-  const onInputChange = useCallback(
-    ({ value }: InputChanged<string>) => {
-      const trimmedValue = value.trim();
-
-      setTitle(value);
-
-      if (trimmedValue === '') {
-        dispatch(clear());
-      } else {
-        dispatch(fetch({ title: trimmedValue }));
-      }
-    },
-    [setTitle, dispatch]
-  );
-
-  const onClearPress = useCallback(() => {
-    setTitle('');
-    dispatch(clear());
-  }, [setTitle, dispatch]);
-
-  useEffect(
-    () => {
-      return () => {
-        dispatch(clear());
-      };
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
-  );
+  const {
+    title,
+    movieEditionId,
+    onInputChange,
+    onClearPress,
+    onEditionChange,
+  } = useParseInput();
 
   return (
     <PageContent title={translate('Parse')}>
@@ -72,6 +47,13 @@ function Parse() {
             <Icon name={icons.REMOVE} size={20} />
           </Button>
         </div>
+
+        <ParseEditionSelector
+          movieId={item.movie?.id}
+          movieEditionId={movieEditionId}
+          isFetching={isFetching}
+          onChange={onEditionChange}
+        />
 
         {isFetching ? <LoadingIndicator /> : null}
 

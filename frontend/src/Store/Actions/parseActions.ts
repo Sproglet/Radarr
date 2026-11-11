@@ -1,5 +1,4 @@
 import { Dispatch } from 'redux';
-import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import AppState from 'App/State/AppState';
 import { createThunk, handleThunks } from 'Store/thunks';
@@ -10,6 +9,7 @@ import createClearReducer from './Creators/Reducers/createClearReducer';
 
 interface FetchPayload {
   title: string;
+  movieEditionId?: number;
 }
 
 //
@@ -18,6 +18,17 @@ interface FetchPayload {
 export const section = 'parse';
 let parseTimeout: number | null = null;
 let abortCurrentRequest: (() => void) | null = null;
+let requestGeneration = 0;
+
+function cancelPending() {
+  requestGeneration += 1;
+  if (parseTimeout !== null) {
+    clearTimeout(parseTimeout);
+    parseTimeout = null;
+  }
+  abortCurrentRequest?.();
+  abortCurrentRequest = null;
+}
 
 //
 // State
@@ -34,12 +45,13 @@ export const defaultState = {
 
 export const FETCH = 'parse/fetch';
 export const CLEAR = 'parse/clear';
+const RESET = 'parse/reset';
 
 //
 // Action Creators
 
 export const fetch = createThunk(FETCH);
-export const clear = createAction(CLEAR);
+export const clear = createThunk(CLEAR);
 
 //
 // Action Handlers
@@ -50,52 +62,60 @@ export const actionHandlers = handleThunks({
     payload: FetchPayload,
     dispatch: Dispatch
   ) {
-    if (parseTimeout) {
-      clearTimeout(parseTimeout);
-    }
+    cancelPending();
+    const generation = requestGeneration;
+    dispatch(
+      set({ section, isFetching: true, isPopulated: false, error: null })
+    );
 
     parseTimeout = window.setTimeout(async () => {
-      dispatch(set({ section, isFetching: true }));
-
-      if (abortCurrentRequest) {
-        abortCurrentRequest();
-      }
-
+      parseTimeout = null;
       const { request, abortRequest } = createAjaxRequest({
         url: '/parse',
-        data: {
-          title: payload.title,
-        },
+        data: payload,
       });
+      abortCurrentRequest = abortRequest;
 
       try {
         const data = await request;
+        if (generation !== requestGeneration) {
+          return;
+        }
 
         dispatch(
           batchActions([
             update({ section, data }),
-
-            set({
-              section,
-              isFetching: false,
-              isPopulated: true,
-              error: null,
-            }),
+            set({ section, isFetching: false, isPopulated: true, error: null }),
           ])
         );
       } catch (error) {
+        if (generation !== requestGeneration) {
+          return;
+        }
+
         dispatch(
           set({
             section,
-            isAdding: false,
-            isAdded: false,
-            addError: error,
+            item: {},
+            isFetching: false,
+            isPopulated: false,
+            error,
           })
         );
+      } finally {
+        if (generation === requestGeneration) {
+          abortCurrentRequest = null;
+        }
       }
-
-      abortCurrentRequest = abortRequest;
     }, 300);
+  },
+  [CLEAR]: function (
+    _getState: () => AppState,
+    _payload: never,
+    dispatch: Dispatch
+  ) {
+    cancelPending();
+    dispatch({ type: RESET });
   },
 });
 
@@ -104,7 +124,7 @@ export const actionHandlers = handleThunks({
 
 export const reducers = createHandleActions(
   {
-    [CLEAR]: createClearReducer(section, defaultState),
+    [RESET]: createClearReducer(section, defaultState),
   },
   defaultState,
   section

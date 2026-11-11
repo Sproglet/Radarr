@@ -2153,5 +2153,7 @@
     "EditionSampleInvalid": "Invalid sample",
     "EditionSampleCandidates": "Matching editions",
     "EditionSampleAmbiguityHelpText": "Make the matching rules exclusive, or choose an edition explicitly during manual import.",
-    "EditionParserContext": "Edition context"
+    "EditionParserContext": "Edition context",
+    "EditionParserSelectionHelp": "Choose an edition to preview its profile. This does not assign or download a release.",
+    "EditionParserTargetsError": "Unable to load edition choices. Try reopening this preview."
 }
