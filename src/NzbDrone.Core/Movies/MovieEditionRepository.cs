@@ -18,6 +18,7 @@ namespace NzbDrone.Core.Movies
         void SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId);
         MovieEdition SetMonitoring(MovieEditionMonitoringChange change);
         MovieEdition SetQualityProfile(MovieEditionQualityProfileChange change);
+        MovieEdition SetDefinition(MovieEditionDefinitionChange change, MovieEdition proposed, Movie expectedMovie, List<MovieEdition> expectedEditions);
         void SetCurrentFile(int movieId, int editionId, int fileId, int? expectedFileId);
     }
 
@@ -147,6 +148,62 @@ namespace NzbDrone.Core.Movies
         private void LockProfile(IDbConnection connection, IDbTransaction transaction, int qualityProfileId)
         {
             QualityProfileReferenceGuard.Lock(connection, transaction, _database.DatabaseType, qualityProfileId);
+        }
+
+        // The service rechecks the proposed filenames/disk under the folder lock.
+        // Keep all assignment/preference fields from storage, never from the proposal.
+        public MovieEdition SetDefinition(MovieEditionDefinitionChange change, MovieEdition proposed, Movie expectedMovie, List<MovieEdition> expectedEditions)
+        {
+            if (change == null || proposed == null || change.MovieId <= 0 || change.EditionId <= 0 || change.ExpectedName == null ||
+                proposed.Id != change.EditionId || proposed.MovieId != change.MovieId || string.IsNullOrWhiteSpace(proposed.Name) ||
+                proposed.Name.Length > 120 || proposed.Name.Any(char.IsControl) || proposed.Attributes == null || proposed.MatchRules == null ||
+                proposed.Attributes.Count > 32 || proposed.Attributes.Any(a => string.IsNullOrWhiteSpace(a.Key) || a.Key.Length > 64 || string.IsNullOrWhiteSpace(a.Value) || a.Value.Length > 128))
+            {
+                throw new ArgumentException("Provide a complete valid definition and expected edition state.");
+            }
+
+            MovieEditionClassifier.ValidateRules(proposed.MatchRules);
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            if (connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", change, transaction) != 1)
+            {
+                throw new ModelNotFoundException(typeof(Movie), change.MovieId);
+            }
+
+            var movie = connection.QuerySingle<Movie>(@"SELECT * FROM ""Movies"" WHERE ""Id"" = @MovieId", change, transaction);
+            var current = connection.Query<MovieEdition>(@"SELECT * FROM ""MovieEditions"" WHERE ""MovieId"" = @MovieId", change, transaction).ToList();
+            var target = current.SingleOrDefault(e => e.Id == change.EditionId);
+            if (!change.Matches(movie, target) || expectedMovie == null || movie.PrimaryEditionId != expectedMovie.PrimaryEditionId ||
+                movie.QualityProfileId != expectedMovie.QualityProfileId || movie.Path != expectedMovie.Path ||
+                current.Count != expectedEditions?.Count || current.Any(e => !expectedEditions.Any(old => SameTarget(e, old))))
+            {
+                throw new InvalidOperationException("The movie or edition state changed during the definition preview. Reload and try again.");
+            }
+
+            if (current.Any(e => e.Id != target.Id && string.Equals(e.Name, proposed.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException("An edition with this name already exists for the movie.");
+            }
+
+            LockProfile(connection, transaction, target.QualityProfileId);
+            if (target.MovieFileId.HasValue && !connection.ExecuteScalar<bool>(@"SELECT EXISTS (SELECT 1 FROM ""MovieFiles"" f
+                WHERE f.""Id"" = @MovieFileId AND f.""MovieId"" = @MovieId AND f.""MovieEditionId"" = @Id
+                  AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" other WHERE other.""MovieFileId"" = f.""Id"" AND other.""Id"" <> @Id))", target, transaction))
+            {
+                throw new InvalidOperationException("Repair the edition's current-file ownership before editing its definition.");
+            }
+
+            var classificationChanged = !(target.MatchRules ?? new()).SequenceEqual(proposed.MatchRules) ||
+                (target.Attributes ?? new()).Count != proposed.Attributes.Count ||
+                (target.Attributes ?? new()).Any(a => !proposed.Attributes.TryGetValue(a.Key, out var value) || value != a.Value);
+            target.RuleRevision = classificationChanged ? checked(target.RuleRevision + 1) : target.RuleRevision;
+            target.Name = proposed.Name.Trim();
+            target.Attributes = proposed.Attributes;
+            target.MatchRules = proposed.MatchRules;
+            connection.Execute(@"UPDATE ""MovieEditions"" SET ""Name"" = @Name, ""Attributes"" = @Attributes,
+                ""MatchRules"" = @MatchRules, ""RuleRevision"" = @RuleRevision WHERE ""Id"" = @Id", target, transaction);
+            transaction.Commit();
+            return target;
         }
 
         public void SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId)

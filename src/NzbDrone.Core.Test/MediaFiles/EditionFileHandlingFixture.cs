@@ -163,6 +163,113 @@ namespace NzbDrone.Core.Test.MediaFiles
             Mocker.SetConstant<IImportApprovedMovie>(_importer);
         }
 
+        private MovieEditionManagementService DefinitionManagement()
+        {
+            Mocker.SetConstant<IMovieEditionNamingPreviewService>(Mocker.Resolve<MovieEditionNamingPreviewService>());
+            return Mocker.Resolve<MovieEditionManagementService>();
+        }
+
+        private MovieEditionDefinitionChange Definition(string name = null)
+        {
+            var target = _editions.Get(_directors.Id);
+            var movie = _movies.Get(_movie.Id);
+            return new MovieEditionDefinitionChange
+            {
+                MovieId = movie.Id, EditionId = target.Id, Name = name ?? target.Name,
+                Attributes = new(target.Attributes), MatchRules = new(target.MatchRules),
+                ExpectedName = target.Name, ExpectedRuleRevision = target.RuleRevision,
+                ExpectedQualityProfileId = target.QualityProfileId, ExpectedMovieFileId = target.MovieFileId,
+                ExpectedMovieMonitored = movie.Monitored, ExpectedEditionMonitored = target.Monitored
+            };
+        }
+
+        [Test]
+        public void definition_edit_preserves_files_until_an_explicit_rename()
+        {
+            ManualImport(_imax, "SyntheticDefinitionImax");
+            ManualImport(_directors, "SyntheticDefinitionDirectors");
+            var before = Db.All<MovieFile>();
+            var request = Definition("Synthetic New Directors 3D");
+            request.Attributes["branding"] = "Synthetic Collector";
+            request.MatchRules.Add("SyntheticCollector$");
+            var management = DefinitionManagement();
+            var preview = management.PreviewDefinition(request);
+            preview.EditingEnabled.Should().BeTrue();
+            preview.CreationEnabled.Should().BeFalse();
+            preview.Samples.Should().HaveCount(2);
+            var saved = management.SetDefinition(request);
+            saved.RuleRevision.Should().Be(request.ExpectedRuleRevision + 1);
+            Db.All<MovieFile>().Should().BeEquivalentTo(before);
+            before.Should().OnlyContain(f => File.Exists(Path.Combine(_movie.Path, f.RelativePath)));
+            _recycled.Should().BeEmpty();
+            Mocker.Resolve<RenameMovieFileService>().Execute(new RenameMovieCommand { MovieIds = new() { _movie.Id } });
+            var renamed = Db.All<MovieFile>();
+            renamed.Single(f => f.MovieEditionId == _directors.Id).RelativePath.Should().Contain("Synthetic New Directors 3D");
+            renamed.Single(f => f.MovieEditionId == _imax.Id).RelativePath.Should().Be(before.Single(f => f.MovieEditionId == _imax.Id).RelativePath);
+        }
+
+        [Test]
+        public void rules_only_edit_accepts_the_targets_existing_video_and_subtitles()
+        {
+            ManualImport(_imax, "SyntheticDefinitionImax");
+            ManualImport(_directors, "SyntheticDefinitionDirectors");
+            var request = Definition();
+            request.MatchRules.Add("SyntheticNewRule$");
+            var management = DefinitionManagement();
+            management.PreviewDefinition(request).EditingEnabled.Should().BeTrue();
+            management.SetDefinition(request).MovieFileId.Should().Be(request.ExpectedMovieFileId);
+            Db.All<SubtitleFile>().Should().HaveCount(2);
+            _recycled.Should().BeEmpty();
+        }
+
+        [TestCase("unassigned-video")]
+        [TestCase("sidecar")]
+        [TestCase("same-name")]
+        [TestCase("sanitized-name")]
+        [TestCase("naming-config")]
+        public void definition_preview_and_save_reject_conflicts_before_any_state_or_file_change(string conflict)
+        {
+            ManualImport(_imax, "SyntheticDefinitionImax");
+            ManualImport(_directors, "SyntheticDefinitionDirectors");
+            var request = Definition("Synthetic Conflicting Cut");
+            var management = DefinitionManagement();
+            var preview = management.PreviewDefinition(request);
+            preview.EditingEnabled.Should().BeTrue();
+            var destination = Path.Combine(_movie.Path, preview.Samples.Single(s => s.MovieEditionId == _directors.Id).RelativePath);
+            switch (conflict)
+            {
+                case "unassigned-video": File.WriteAllText(Path.ChangeExtension(destination, ".mp4"), "Synthetic reserved video"); break;
+                case "sidecar": File.WriteAllText(Path.ChangeExtension(destination, ".en.srt"), "Synthetic reserved sidecar"); break;
+                case "same-name": request.Name = _imax.Name; break;
+                case "sanitized-name": request.Name = _imax.Name + "<>"; break;
+                case "naming-config": _naming.StandardMovieFormat = "{Movie Title}"; break;
+            }
+
+            var before = Db.All<MovieEdition>();
+            var files = Db.All<MovieFile>();
+            management.PreviewDefinition(request).EditingEnabled.Should().BeFalse();
+            Action edit = () => management.SetDefinition(request);
+            edit.Should().Throw<InvalidOperationException>();
+            Db.All<MovieEdition>().Should().BeEquivalentTo(before);
+            Db.All<MovieFile>().Should().BeEquivalentTo(files);
+            _recycled.Should().BeEmpty();
+        }
+
+        [Test]
+        public void definition_preview_uses_each_existing_files_actual_quality()
+        {
+            ManualImport(_imax, "SyntheticDefinitionImax");
+            ManualImport(_directors, "SyntheticDefinitionDirectors");
+            var file = Db.All<MovieFile>().Single(f => f.MovieEditionId == _directors.Id);
+            file.Quality = new QualityModel(Quality.HDTV720p);
+            Db.Update(file);
+            _naming.StandardMovieFormat = "{Managed Edition} {Quality Title}";
+            var result = DefinitionManagement().PreviewDefinition(Definition());
+            result.EditingEnabled.Should().BeTrue();
+            result.Samples.Single(s => s.MovieEditionId == _directors.Id).RelativePath.Should().Contain("HDTV-720p");
+            result.Samples.Single(s => s.MovieEditionId == _imax.Id).RelativePath.Should().Contain("Bluray-1080p");
+        }
+
         private string Source(string marker)
         {
             var folder = Path.Combine(TempFolder, "downloads", marker);

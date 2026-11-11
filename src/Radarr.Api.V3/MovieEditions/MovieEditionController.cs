@@ -149,6 +149,61 @@ namespace Radarr.Api.V3.MovieEditions
             }
         }
 
+        [HttpPost("{id:int}/definition")]
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public Results<Ok<MovieEditionResource>, Conflict<object>> SetDefinition(int id, [FromBody] MovieEditionDefinitionResource request)
+        {
+            try
+            {
+                var edition = _management.SetDefinition(request?.ToChange(id));
+                return TypedResults.Ok(edition.ToResource(_movies.Get(edition.MovieId), _contexts));
+            }
+            catch (ArgumentException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
+            catch (NamingFormatException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
+            catch (ModelNotFoundException ex)
+            {
+                throw new NotFoundException(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return TypedResults.Conflict<object>(new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("{id:int}/definition/preview")]
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public Results<Ok<MovieEditionNamingPreview>, Conflict<object>> PreviewDefinition(int id, [FromBody] MovieEditionDefinitionResource request)
+        {
+            try
+            {
+                return TypedResults.Ok(_management.PreviewDefinition(request?.ToChange(id)));
+            }
+            catch (ArgumentException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
+            catch (NamingFormatException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
+            catch (ModelNotFoundException ex)
+            {
+                throw new NotFoundException(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return TypedResults.Conflict<object>(new { message = ex.Message });
+            }
+        }
+
         private static MovieEdition ToProposal(MovieEditionNamingProposalResource proposal)
         {
             if (proposal == null || proposal.QualityProfileId <= 0)

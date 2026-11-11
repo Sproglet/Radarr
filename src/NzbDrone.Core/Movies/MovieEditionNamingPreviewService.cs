@@ -25,12 +25,14 @@ namespace NzbDrone.Core.Movies
         public List<MovieEditionNamingSample> Samples { get; set; } = new();
         public List<string> Rejections { get; set; } = new();
         public bool NamingValid => Rejections.Count == 0 && Samples.Count > 0;
-        public bool CreationEnabled => NamingValid;
+        public bool CreationEnabled => NamingValid && ProposedEdition?.Id == 0;
+        public bool EditingEnabled => NamingValid && ProposedEdition?.Id > 0;
     }
 
     public interface IMovieEditionNamingPreviewService
     {
         MovieEditionNamingPreview Preview(MovieEdition proposal);
+        MovieEditionNamingPreview PreviewEdit(MovieEdition proposal);
     }
 
     // A naming prerequisite only: never creates an edition, refreshes media info or reserves a destination.
@@ -61,6 +63,21 @@ namespace NzbDrone.Core.Movies
 
         public MovieEditionNamingPreview Preview(MovieEdition proposal)
         {
+            return Preview(proposal, false);
+        }
+
+        public MovieEditionNamingPreview PreviewEdit(MovieEdition proposal)
+        {
+            if (proposal?.Id <= 0 || proposal == null)
+            {
+                throw new ArgumentException("Select an existing edition for the definition preview.");
+            }
+
+            return Preview(proposal, true);
+        }
+
+        private MovieEditionNamingPreview Preview(MovieEdition proposal, bool editing)
+        {
             if (proposal == null || proposal.MovieId <= 0 || string.IsNullOrWhiteSpace(proposal.Name) || proposal.Name.Any(char.IsControl) || proposal.Name.Trim().Length > 120 || proposal.QualityProfileId < 0)
             {
                 throw new ArgumentException("Provide a positive movie ID, a name of up to 120 characters and a valid profile ID.");
@@ -82,20 +99,36 @@ namespace NzbDrone.Core.Movies
             using var lease = MovieFileOperationLock.Acquire(proposal.MovieId);
             var movie = _movies.Find(proposal.MovieId) ?? throw new ModelNotFoundException(typeof(Movie), proposal.MovieId);
             var profile = _profiles.Get(proposal.QualityProfileId == 0 ? movie.QualityProfileId : proposal.QualityProfileId);
+            var editions = _editions.GetByMovie(movie.Id).OrderByDescending(e => e.Id == movie.PrimaryEditionId).ThenBy(e => e.Id).ToList();
+            var original = editing ? editions.SingleOrDefault(e => e.Id == proposal.Id) : null;
+            if (editing && original == null)
+            {
+                throw new ModelNotFoundException(typeof(MovieEdition), proposal.Id);
+            }
+
+            if (editing && profile.Id != original.QualityProfileId)
+            {
+                throw new ArgumentException("Change the edition profile separately before editing its definition.");
+            }
             var proposed = new MovieEdition
             {
-                MovieId = movie.Id, Name = proposal.Name.Trim(), QualityProfileId = profile.Id,
-                Attributes = attributes, MatchRules = rules, Monitored = false
+                Id = original?.Id ?? 0, MovieId = movie.Id, Name = proposal.Name.Trim(), QualityProfileId = profile.Id,
+                Attributes = attributes, MatchRules = rules, Monitored = original?.Monitored ?? false,
+                EditionKey = original?.EditionKey, MovieFileId = original?.MovieFileId,
+                LastSearchTime = original?.LastSearchTime, RuleRevision = original?.RuleRevision ?? 1
             };
             var config = _naming.GetConfig();
             var result = new MovieEditionNamingPreview { ProposedEdition = proposed, NamingFormat = config.StandardMovieFormat };
+            if (editions.Any(e => e.Id != proposed.Id && string.Equals(e.Name, proposed.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                result.Rejections.Add("An edition with this name already exists for the movie.");
+            }
             if (!config.RenameMovies || !(config.StandardMovieFormat?.Contains("{Managed Edition}", StringComparison.OrdinalIgnoreCase) ?? false))
             {
                 result.Rejections.Add("Enable movie renaming and use the full {Managed Edition} token without truncation before adding another edition.");
                 return result;
             }
 
-            var editions = _editions.GetByMovie(movie.Id).OrderByDescending(e => e.Id == movie.PrimaryEditionId).ThenBy(e => e.Id).ToList();
             var contexts = new List<MovieEditionContext>();
             foreach (var edition in editions)
             {
@@ -109,7 +142,7 @@ namespace NzbDrone.Core.Movies
                 }
             }
 
-            var source = contexts.Select(c => c.CurrentFile).FirstOrDefault(f => f != null);
+            var source = contexts.FirstOrDefault(c => c.Edition.Id == proposed.Id)?.CurrentFile ?? contexts.Select(c => c.CurrentFile).FirstOrDefault(f => f != null);
             if (source == null)
             {
                 result.Rejections.Add("Import a first edition file before previewing additional edition filenames.");
@@ -125,10 +158,9 @@ namespace NzbDrone.Core.Movies
             }
             // The detached movie has no path, so FileNameBuilder cannot trigger media-info refreshes.
             var previewMovie = new Movie { Id = movie.Id, MovieMetadataId = movie.MovieMetadataId, MovieMetadata = movie.MovieMetadata };
-            var formats = _formats.ParseCustomFormat(source, movie);
             var knownFiles = _files.GetFilesByMovie(movie.Id);
             var destinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var edition in editions.Concat(new[] { proposed }))
+            foreach (var edition in editions.Where(e => e.Id != proposed.Id).Concat(new[] { proposed }))
             {
                 var editionProfile = edition == proposed ? profile : contexts.FirstOrDefault(c => c.Edition.Id == edition.Id)?.QualityProfile;
                 if (editionProfile == null)
@@ -136,11 +168,20 @@ namespace NzbDrone.Core.Movies
                     continue;
                 }
 
+                var reference = contexts.FirstOrDefault(c => c.Edition.Id == edition.Id)?.CurrentFile ?? source;
+                var formats = _formats.ParseCustomFormat(reference, movie);
+                var fileExtension = Path.GetExtension(reference.RelativePath);
+                if (string.IsNullOrWhiteSpace(fileExtension))
+                {
+                    result.Rejections.Add($"Repair edition '{edition.Name}' file extension before previewing filenames.");
+                    continue;
+                }
+
                 var sample = new MovieFile
                 {
-                    MovieId = movie.Id, RelativePath = source.RelativePath, SceneName = source.SceneName,
-                    OriginalFilePath = source.OriginalFilePath, Quality = source.Quality, MediaInfo = source.MediaInfo,
-                    Languages = source.Languages, ReleaseGroup = source.ReleaseGroup, Edition = source.Edition,
+                    MovieId = movie.Id, RelativePath = reference.RelativePath, SceneName = reference.SceneName,
+                    OriginalFilePath = reference.OriginalFilePath, Quality = reference.Quality, MediaInfo = reference.MediaInfo,
+                    Languages = reference.Languages, ReleaseGroup = reference.ReleaseGroup, Edition = reference.Edition,
                     EditionContext = new MovieEditionContext(edition, editionProfile, null)
                 };
                 var labelConfig = new NamingConfig
@@ -154,7 +195,7 @@ namespace NzbDrone.Core.Movies
                 }
 
                 var fileName = _names.BuildFileName(previewMovie, sample, config, formats);
-                var relativePath = fileName + extension;
+                var relativePath = fileName + fileExtension;
                 var key = Path.ChangeExtension(relativePath.Replace('\\', '/'), null);
                 if (string.IsNullOrWhiteSpace(fileName) || Path.IsPathRooted(relativePath) || relativePath.Replace('\\', '/').Split('/').Any(p => p == ".."))
                 {
@@ -165,7 +206,8 @@ namespace NzbDrone.Core.Movies
                     result.Rejections.Add("Edition names produce the same destination after formatting/sanitization. Choose distinct names.");
                 }
 
-                if (edition == proposed && knownFiles.Any(f => string.Equals(Path.ChangeExtension(f.RelativePath.Replace('\\', '/'), null), key, StringComparison.OrdinalIgnoreCase)))
+                if (edition == proposed && knownFiles.Any(f => f.Id != (editing ? original.MovieFileId : null) &&
+                    string.Equals(Path.ChangeExtension(f.RelativePath.Replace('\\', '/'), null), key, StringComparison.OrdinalIgnoreCase)))
                 {
                     result.Rejections.Add("The proposed destination conflicts with an existing file record, including its sidecar basename.");
                 }

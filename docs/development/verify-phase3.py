@@ -112,7 +112,7 @@ def rows(table):
     return DATABASE.rows(table)
 
 
-def snapshot():
+def snapshot(expected_attributes=None):
     files = [file for file in rows("MovieFiles") if file["MovieId"] == 1]
     extras = [extra for extra in rows("SubtitleFiles") if extra["MovieId"] == 1]
     assert len(files) == 2, files
@@ -127,8 +127,12 @@ def snapshot():
         )
     editions = [edition for edition in rows("MovieEditions") if edition["MovieId"] == 1]
     assert {e["Id"]: e["MovieFileId"] for e in editions if e["MovieFileId"] is not None} == {k: v[0] for k, v in result.items()}
-    assert json.loads(editions[0]["Attributes"]) == {"cut": "theatrical", "framing": "imax"}
-    assert json.loads(editions[1]["Attributes"]) == {"cut": "directors-cut", "stereoscopic": "3d"}
+    expected_attributes = expected_attributes if expected_attributes is not None else {
+        1: {"cut": "theatrical", "framing": "imax"},
+        2: {"cut": "directors-cut", "stereoscopic": "3d"},
+    }
+    for edition_id, attributes in expected_attributes.items():
+        assert json.loads(next(e for e in editions if e["Id"] == edition_id)["Attributes"]) == attributes
     movie = api("api/v3/movie/1")
     primary = next(parent for parent in rows("Movies") if parent["Id"] == 1)["PrimaryEditionId"]
     if primary in result:

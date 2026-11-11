@@ -15,6 +15,8 @@ namespace NzbDrone.Core.Movies
         MovieEdition SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId);
         MovieEdition SetMonitoring(MovieEditionMonitoringChange change);
         MovieEdition SetQualityProfile(MovieEditionQualityProfileChange change);
+        MovieEditionNamingPreview PreviewDefinition(MovieEditionDefinitionChange change);
+        MovieEdition SetDefinition(MovieEditionDefinitionChange change);
     }
 
     public class MovieEditionManagementService : IMovieEditionManagementService
@@ -25,9 +27,10 @@ namespace NzbDrone.Core.Movies
         private readonly IEditionFilePathGuard _paths;
         private readonly IDiskProvider _disk;
         private readonly IEventAggregator _events;
+        private readonly IMovieEditionContextService _contexts;
 
         public MovieEditionManagementService(IMovieRepository movies, IMovieEditionRepository editions,
-            IMovieEditionNamingPreviewService preview, IEditionFilePathGuard paths, IDiskProvider disk, IEventAggregator events)
+            IMovieEditionNamingPreviewService preview, IEditionFilePathGuard paths, IDiskProvider disk, IEventAggregator events, IMovieEditionContextService contexts)
         {
             _movies = movies;
             _editions = editions;
@@ -35,6 +38,7 @@ namespace NzbDrone.Core.Movies
             _paths = paths;
             _disk = disk;
             _events = events;
+            _contexts = contexts;
         }
 
         public MovieEdition SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId)
@@ -149,6 +153,108 @@ namespace NzbDrone.Core.Movies
 
             _events.PublishEvent(new MovieUpdatedEvent(movie));
             return target;
+        }
+
+        public MovieEditionNamingPreview PreviewDefinition(MovieEditionDefinitionChange change)
+        {
+            ValidateDefinitionRequest(change);
+            using var acquisition = MovieEditionAcquisitionGate.Acquire(change.MovieId);
+            using var lease = MovieFileOperationLock.Acquire(change.MovieId);
+            var (movie, target) = DefinitionTarget(change);
+            var preview = DefinitionPreview(change, movie, target);
+            return preview;
+        }
+
+        public MovieEdition SetDefinition(MovieEditionDefinitionChange change)
+        {
+            ValidateDefinitionRequest(change);
+            Movie movie;
+            MovieEdition target;
+            using (MovieEditionAcquisitionGate.Acquire(change.MovieId))
+            using (MovieFileOperationLock.Acquire(change.MovieId))
+            {
+                (movie, target) = DefinitionTarget(change);
+                var expected = _editions.GetByMovie(movie.Id);
+                var preview = DefinitionPreview(change, movie, target);
+                if (!preview.EditingEnabled)
+                {
+                    throw new InvalidOperationException(string.Join(" ", preview.Rejections));
+                }
+
+                target = _editions.SetDefinition(change, preview.ProposedEdition, movie, expected);
+                movie = _movies.Get(movie.Id);
+            }
+
+            _events.PublishEvent(new MovieUpdatedEvent(movie));
+            return target;
+        }
+
+        private static void ValidateDefinitionRequest(MovieEditionDefinitionChange change)
+        {
+            if (change == null || change.MovieId <= 0 || change.EditionId <= 0 || change.ExpectedName == null ||
+                change.Attributes == null || change.MatchRules == null)
+            {
+                throw new ArgumentException("Provide a movie and edition, name, full attributes/rules and complete expected state.");
+            }
+        }
+
+        private (Movie Movie, MovieEdition Target) DefinitionTarget(MovieEditionDefinitionChange change)
+        {
+            var movie = _movies.Find(change.MovieId) ?? throw new ModelNotFoundException(typeof(Movie), change.MovieId);
+            var target = _editions.Find(change.EditionId) ?? throw new ModelNotFoundException(typeof(MovieEdition), change.EditionId);
+            if (target.MovieId != movie.Id)
+            {
+                throw new ModelNotFoundException(typeof(MovieEdition), change.EditionId);
+            }
+
+            if (!change.Matches(movie, target))
+            {
+                throw new InvalidOperationException("The movie or edition settings changed. Reload before editing its definition.");
+            }
+
+            return (movie, target);
+        }
+
+        private MovieEditionNamingPreview DefinitionPreview(MovieEditionDefinitionChange change, Movie movie, MovieEdition target)
+        {
+            var preview = _preview.PreviewEdit(new MovieEdition
+            {
+                Id = target.Id, MovieId = movie.Id, Name = change.Name, QualityProfileId = target.QualityProfileId,
+                Attributes = change.Attributes, MatchRules = change.MatchRules
+            });
+            if (!preview.NamingValid)
+            {
+                return preview;
+            }
+
+            var destination = Path.Combine(movie.Path, preview.Samples.Single(s => s.MovieEditionId == target.Id).RelativePath);
+            try
+            {
+                _paths.Validate(movie, destination, target.MovieFileId);
+                var currentFile = target.MovieFileId.HasValue ? DefinitionFilePath(movie, target) : null;
+                var basename = Path.ChangeExtension(destination, null);
+                var keepsBasename = currentFile != null && string.Equals(Path.ChangeExtension(currentFile, null), basename, StringComparison.OrdinalIgnoreCase);
+                var directory = Path.GetDirectoryName(destination);
+                if (!keepsBasename && _disk.FolderExists(directory) && _disk.GetFiles(directory, false).Any(path =>
+                    !MediaFileExtensions.Extensions.Contains(Path.GetExtension(path)) &&
+                    (string.Equals(Path.ChangeExtension(path, null), basename, StringComparison.OrdinalIgnoreCase) || path.StartsWith(basename + ".", StringComparison.OrdinalIgnoreCase))))
+                {
+                    throw new InvalidOperationException("The proposed basename has existing sidecar files. Resolve their ownership before changing the edition name.");
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                preview.Rejections.Add(ex.Message);
+            }
+
+            return preview;
+        }
+
+        private string DefinitionFilePath(Movie movie, MovieEdition target)
+        {
+            // Resolve ownership before accepting any existing sidecars as this file's.
+            var context = _contexts.Resolve(movie, target.Id);
+            return context.CurrentFile == null ? null : Path.Combine(movie.Path, context.CurrentFile.RelativePath);
         }
     }
 }
