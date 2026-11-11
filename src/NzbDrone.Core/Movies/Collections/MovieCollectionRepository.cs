@@ -1,7 +1,10 @@
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
+using Dapper;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Profiles.Qualities;
 
 namespace NzbDrone.Core.Movies.Collections
 {
@@ -16,6 +19,24 @@ namespace NzbDrone.Core.Movies.Collections
         public MovieCollectionRepository(IMainDatabase database, IEventAggregator eventAggregator)
             : base(database, eventAggregator)
         {
+        }
+
+        protected override bool RequiresLifecycleTransaction => true;
+
+        protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, MovieCollection collection)
+        {
+            QualityProfileReferenceGuard.Lock(connection, transaction, _database.DatabaseType, collection.QualityProfileId);
+        }
+
+        protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, MovieCollection collection, List<string> properties)
+        {
+            if (!properties.Contains(nameof(MovieCollection.QualityProfileId))) return;
+            connection.Execute(@"UPDATE ""Collections"" SET ""QualityProfileId"" = ""QualityProfileId"" WHERE ""Id"" = @Id", new { collection.Id }, transaction);
+            var stored = connection.QuerySingle<int>(@"SELECT ""QualityProfileId"" FROM ""Collections"" WHERE ""Id"" = @Id", new { collection.Id }, transaction);
+            if (stored != collection.QualityProfileId)
+            {
+                QualityProfileReferenceGuard.Lock(connection, transaction, _database.DatabaseType, collection.QualityProfileId);
+            }
         }
 
         public MovieCollection GetByTmdbId(int tmdbId)

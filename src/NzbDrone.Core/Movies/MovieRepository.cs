@@ -53,6 +53,7 @@ namespace NzbDrone.Core.Movies
 
         protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, Movie movie)
         {
+            QualityProfileReferenceGuard.Lock(connection, transaction, _database.DatabaseType, movie.QualityProfileId);
             MovieEditionLifecycle.CreateDefault(connection, transaction, movie.Id);
             var stored = connection.QuerySingle<Movie>(@"SELECT * FROM ""Movies"" WHERE ""Id"" = @Id", new { movie.Id }, transaction);
             movie.PrimaryEditionId = stored.PrimaryEditionId;
@@ -87,6 +88,7 @@ namespace NzbDrone.Core.Movies
             if (properties.Contains(nameof(Movie.QualityProfileId)) &&
                 (movie.QualityProfileId != stored.QualityProfileId || properties.Count == 1))
             {
+                QualityProfileReferenceGuard.Lock(connection, transaction, _database.DatabaseType, movie.QualityProfileId);
                 connection.Execute(@"UPDATE ""MovieEditions"" SET ""QualityProfileId"" = @QualityProfileId
                     WHERE ""Id"" = @PrimaryEditionId AND ""MovieId"" = @Id", movie, transaction);
             }

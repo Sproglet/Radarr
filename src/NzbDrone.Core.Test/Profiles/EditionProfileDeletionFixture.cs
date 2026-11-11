@@ -86,7 +86,8 @@ namespace NzbDrone.Core.Test.Profiles
         public void unrelated_invalid_edition_does_not_block_an_unused_profile_delete()
         {
             _secondary.QualityProfileId = 999999;
-            _editions.SetFields(_secondary, e => e.QualityProfileId);
+            // Deliberately seed legacy damage outside the validated assignment writers.
+            Db.Update(_secondary);
             _profiles.Delete(_unusedProfile.Id);
             _profiles.Exists(_unusedProfile.Id).Should().BeFalse();
             _editions.Get(_secondary.Id).QualityProfileId.Should().Be(999999);

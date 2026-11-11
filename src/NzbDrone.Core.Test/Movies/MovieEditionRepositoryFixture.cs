@@ -9,6 +9,7 @@ using NUnit.Framework;
 using NzbDrone.Core.Languages;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Movies;
+using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Test.Framework;
 
@@ -23,7 +24,9 @@ namespace NzbDrone.Core.Test.MovieTests
         [SetUp]
         public void Setup()
         {
+            var profile = Db.Insert(new QualityProfile { Name = "Synthetic Repository Profile", Items = new(), Language = Language.English });
             _movie = Builder<Movie>.CreateNew()
+                .With(m => m.QualityProfileId = profile.Id)
                 .With(m => m.MovieFileId = 0)
                 .With(m => m.PrimaryEditionId = null)
                 .BuildNew();

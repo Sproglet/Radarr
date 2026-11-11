@@ -21,12 +21,22 @@ namespace NzbDrone.Core.Test.MovieTests
     public class MovieEditionLifecycleFixture : DbTest<MovieRepository, Movie>
     {
         private int _metadataId;
+        private int _profileId;
+        private int _otherProfileId;
+
+        [SetUp]
+        public void Setup()
+        {
+            _profileId = Db.Insert(new QualityProfile { Name = "Synthetic Lifecycle Default", Items = new(), Language = Language.English }).Id;
+            _otherProfileId = Db.Insert(new QualityProfile { Name = "Synthetic Lifecycle Other", Items = new(), Language = Language.English }).Id;
+        }
 
         private Movie NewMovie()
         {
             return Builder<Movie>.CreateNew()
                 .With(m => m.Title = "Synthetic Lunar Voyage")
                 .With(m => m.MovieMetadataId = ++_metadataId)
+                .With(m => m.QualityProfileId = _profileId)
                 .With(m => m.MovieFileId = 0)
                 .With(m => m.PrimaryEditionId = null)
                 .With(m => m.LastSearchTime = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc))
@@ -141,7 +151,7 @@ namespace NzbDrone.Core.Test.MovieTests
         {
             var movie = Subject.Insert(NewMovie());
             var originalProfile = movie.QualityProfileId;
-            movie.QualityProfileId = 42;
+            movie.QualityProfileId = _otherProfileId;
             var missing = NewMovie();
             missing.Id = movie.Id + 100;
 
@@ -210,12 +220,12 @@ namespace NzbDrone.Core.Test.MovieTests
             var secondary = Secondary(movie);
             var file = FileFor(movie);
             Mocker.Resolve<MovieEditionRepository>().SetCurrentFile(movie.Id, movie.PrimaryEditionId.Value, file.Id, null);
-            movie.QualityProfileId = 42;
+            movie.QualityProfileId = _otherProfileId;
             movie.LastSearchTime = movie.LastSearchTime.Value.AddDays(1);
             Subject.UpdateMany(new List<Movie> { movie });
 
             var primary = Db.All<MovieEdition>().Single(e => e.Id == movie.PrimaryEditionId);
-            primary.QualityProfileId.Should().Be(42);
+            primary.QualityProfileId.Should().Be(_otherProfileId);
             primary.LastSearchTime.Should().Be(movie.LastSearchTime);
             Db.Single<Movie>().MovieFileId.Should().Be(file.Id);
             Db.All<MovieEdition>().Single(e => e.Id == secondary.Id).QualityProfileId.Should().Be(99);

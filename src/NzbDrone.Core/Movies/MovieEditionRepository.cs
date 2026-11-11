@@ -32,6 +32,7 @@ namespace NzbDrone.Core.Movies
         protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, MovieEdition edition)
         {
             MovieEditionClassifier.ValidateRules(edition.MatchRules);
+            LockProfile(connection, transaction, edition.QualityProfileId);
         }
 
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, MovieEdition edition, List<string> properties)
@@ -39,6 +40,10 @@ namespace NzbDrone.Core.Movies
             connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" =
                 (SELECT ""MovieId"" FROM ""MovieEditions"" WHERE ""Id"" = @Id)", new { edition.Id }, transaction);
             var stored = connection.QuerySingle<MovieEdition>(@"SELECT * FROM ""MovieEditions"" WHERE ""Id"" = @Id", new { edition.Id }, transaction);
+            if (properties.Contains(nameof(MovieEdition.QualityProfileId)) && edition.QualityProfileId != stored.QualityProfileId)
+            {
+                LockProfile(connection, transaction, edition.QualityProfileId);
+            }
             if (properties.Contains(nameof(MovieEdition.MatchRules)))
             {
                 MovieEditionClassifier.ValidateRules(edition.MatchRules);
@@ -140,12 +145,7 @@ namespace NzbDrone.Core.Movies
 
         private void LockProfile(IDbConnection connection, IDbTransaction transaction, int qualityProfileId)
         {
-            var profileLock = _database.DatabaseType == DatabaseType.PostgreSQL ? " FOR KEY SHARE" : "";
-            var profileId = connection.QuerySingleOrDefault<int?>($@"SELECT ""Id"" FROM ""QualityProfiles"" WHERE ""Id"" = @QualityProfileId{profileLock}", new { QualityProfileId = qualityProfileId }, transaction);
-            if (!profileId.HasValue)
-            {
-                throw new ModelNotFoundException(typeof(QualityProfile), qualityProfileId);
-            }
+            QualityProfileReferenceGuard.Lock(connection, transaction, _database.DatabaseType, qualityProfileId);
         }
 
         public void SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId)
