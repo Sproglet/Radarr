@@ -16,6 +16,10 @@ function ParseResult(props: ParseResultProps) {
   const {
     customFormats,
     customFormatScore,
+    movieEditionName,
+    qualityProfileId,
+    qualityProfileName,
+    editionClassification,
     languages,
     parsedMovieInfo,
     movie,
@@ -161,8 +165,24 @@ function ParseResult(props: ParseResultProps) {
 
         <ParseResultItem
           title={translate('CustomFormatScore')}
-          data={customFormatScore}
+          data={customFormatScore ?? translate('Unknown')}
         />
+        <ParseResultItem
+          title={translate('Edition')}
+          data={movieEditionName ?? translate('Unknown')}
+        />
+        {qualityProfileId ? (
+          <ParseResultItem
+            title={translate('QualityProfile')}
+            data={qualityProfileName ?? qualityProfileId}
+          />
+        ) : null}
+        {editionClassification ? (
+          <ParseResultItem
+            title={translate('EditionParserContext')}
+            data={editionClassification.reason}
+          />
+        ) : null}
       </FieldSet>
     </div>
   );

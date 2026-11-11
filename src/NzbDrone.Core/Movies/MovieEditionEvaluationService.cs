@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Movies
@@ -10,12 +12,14 @@ namespace NzbDrone.Core.Movies
         public EditionClassification Classification { get; set; }
         public MovieEditionContext Context { get; set; }
         public int? CustomFormatScore { get; set; }
+        public List<CustomFormat> CustomFormats { get; set; }
     }
 
     public interface IMovieEditionEvaluationService
     {
         MovieEditionEvaluation Preview(RemoteMovie release, string presentationEvidence, int? explicitEditionId = null);
         MovieEditionEvaluation PreviewParsed(RemoteMovie release);
+        MovieEditionEvaluation PreviewParsed(RemoteMovie release, int? explicitEditionId);
     }
 
     // A search/parser preview primitive. Never authorizes acquisition or mutates a shared movie.
@@ -34,6 +38,11 @@ namespace NzbDrone.Core.Movies
 
         public MovieEditionEvaluation PreviewParsed(RemoteMovie release)
         {
+            return PreviewParsed(release, null);
+        }
+
+        public MovieEditionEvaluation PreviewParsed(RemoteMovie release, int? explicitEditionId)
+        {
             if (release.Movie == null || release.Release == null)
             {
                 return new MovieEditionEvaluation { Classification = new EditionClassification { Status = EditionClassificationStatus.Invalid, Reason = "Movie identity and release are required for edition scoring." } };
@@ -45,7 +54,7 @@ namespace NzbDrone.Core.Movies
                 return new MovieEditionEvaluation { Classification = new EditionClassification { Status = EditionClassificationStatus.Invalid, Reason = "Parser evidence is unavailable; review the release manually." } };
             }
 
-            var classification = _classifier.Classify(release.Movie.Id, release.Release.Title, evidence.Label, evidence.Presentation);
+            var classification = _classifier.Classify(release.Movie.Id, release.Release.Title, evidence.Label, evidence.Presentation, explicitEditionId);
             return Evaluate(release, classification);
         }
 
@@ -84,11 +93,14 @@ namespace NzbDrone.Core.Movies
                     ReleaseSource = release.ReleaseSource, MovieRequested = release.MovieRequested
                 };
                 var formats = _formats.ParseCustomFormat(preview, release.Release.Size);
+                result.CustomFormats = formats;
                 result.CustomFormatScore = result.Context.QualityProfile.CalculateCustomFormatScore(formats);
             }
-            catch (InvalidOperationException ex)
+            catch (Exception ex) when (ex is InvalidOperationException || ex is ModelNotFoundException)
             {
                 result.Context = null;
+                result.CustomFormats = null;
+                result.CustomFormatScore = null;
                 result.Classification.Status = EditionClassificationStatus.Invalid;
                 result.Classification.Reason = ex.Message;
             }

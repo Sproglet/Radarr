@@ -1,8 +1,10 @@
+using System;
 using System.Collections.Generic;
 using FluentAssertions;
 using Moq;
 using NUnit.Framework;
 using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles;
@@ -13,6 +15,20 @@ namespace NzbDrone.Core.Test.MovieTests
 {
     public class MovieEditionEvaluationFixture : CoreTest<MovieEditionEvaluationService>
     {
+        [TestCase(true)]
+        [TestCase(false)]
+        public void missing_profile_and_invalid_file_context_have_unknown_score(bool missingProfile)
+        {
+            var movie = new Movie { Id = 42 };
+            Mocker.GetMock<IMovieEditionClassifier>().Setup(c => c.Classify(42, It.IsAny<string>(), null, "3D", null))
+                .Returns(new EditionClassification { Status = EditionClassificationStatus.Matched, CandidateEditionIds = new() { 2 }, RuleRevision = 7 });
+            Mocker.GetMock<IMovieEditionContextService>().Setup(c => c.Resolve(movie, 2, null))
+                .Throws(missingProfile ? new ModelNotFoundException(typeof(QualityProfile), 7) : new InvalidOperationException("Synthetic damaged ownership"));
+            var result = Subject.Preview(new RemoteMovie { Movie = movie, Release = new ReleaseInfo { Title = "Synthetic.Voyage.2026-SyntheticGroup" } }, "3D");
+            result.Classification.Status.Should().Be(EditionClassificationStatus.Invalid);
+            result.Context.Should().BeNull();
+            result.CustomFormatScore.Should().BeNull();
+        }
         [TestCase(120)]
         [TestCase(-240)]
         public void preview_scores_selected_profile_without_changing_shared_movie(int score)

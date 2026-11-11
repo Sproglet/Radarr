@@ -26,7 +26,17 @@ export interface ParseModel extends ModelBase {
   movie?: Movie;
   languages?: Language[];
   customFormats?: CustomFormat[];
-  customFormatScore?: number;
+  customFormatScore?: number | null;
+  movieEditionId?: number;
+  movieEditionName?: string;
+  qualityProfileId?: number;
+  qualityProfileName?: string;
+  editionSelectionExplicit?: boolean;
+  editionClassification?: {
+    status: 'matched' | 'unconfigured' | 'ambiguous' | 'invalid';
+    reason: string;
+    candidateEditionIds: number[];
+  };
 }
 
 type ParseAppState = AppSectionItemState<ParseModel>;

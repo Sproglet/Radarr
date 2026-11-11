@@ -2152,5 +2152,6 @@
     "EditionSampleAmbiguous": "Ambiguous",
     "EditionSampleInvalid": "Invalid sample",
     "EditionSampleCandidates": "Matching editions",
-    "EditionSampleAmbiguityHelpText": "Make the matching rules exclusive, or choose an edition explicitly during manual import."
+    "EditionSampleAmbiguityHelpText": "Make the matching rules exclusive, or choose an edition explicitly during manual import.",
+    "EditionParserContext": "Edition context"
 }
