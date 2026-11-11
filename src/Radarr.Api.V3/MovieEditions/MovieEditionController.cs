@@ -93,6 +93,31 @@ namespace Radarr.Api.V3.MovieEditions
             }
         }
 
+        [HttpPost("{id:int}/qualityprofile")]
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public Results<Ok<MovieEditionResource>, Conflict<object>> SetQualityProfile(int id, [FromBody] MovieEditionQualityProfileResource request)
+        {
+            try
+            {
+                var edition = _management.SetQualityProfile(request?.ToChange(id));
+                var movie = _movies.Get(edition.MovieId);
+                return TypedResults.Ok(edition.ToResource(movie, _contexts));
+            }
+            catch (ArgumentException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
+            catch (ModelNotFoundException ex)
+            {
+                throw new NotFoundException(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return TypedResults.Conflict<object>(new { message = ex.Message });
+            }
+        }
+
         [HttpPost("{id:int}/primary")]
         [Consumes("application/json")]
         [Produces("application/json")]

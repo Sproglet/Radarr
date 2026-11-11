@@ -130,7 +130,7 @@ def seed(clients, secondary_profile):
                 (edition, edition_row[1], title, SHARED, client.client_id, json.dumps(release), json.dumps(data)))
 
 
-def queue(expected):
+def queue(expected, scores=None):
     p.command("RefreshMonitoredDownloads")
     result = p.api("api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true")["records"]
     rows = [r for r in result if r["downloadId"] == SHARED]
@@ -139,7 +139,7 @@ def queue(expected):
         assert row["movieEditionId"] == row["downloadClientId"] - 40, row
         assert row["trackedDownloadState"] == "downloading", row
         assert row["movieId"] == 1, row
-        assert row["customFormatScore"] == row["editionCustomFormatScore"] == {41: 11, 42: 77}[row["downloadClientId"]], row
+        assert row["customFormatScore"] == row["editionCustomFormatScore"] == (scores if scores is not None else {41: 11, 42: 77})[row["downloadClientId"]], row
     return {r["downloadClientId"] - 40: r for r in rows}
 
 
@@ -1379,9 +1379,110 @@ def verify_monitoring(edition_profile, browser=False):
     print("PASS: invalid targets can be disabled but not activated; existing client/edition assignments, file/subtitle bytes/IDs and history survive without search or acquisition", flush=True)
 
 
+def quality_profile_request(edition_id, profile_id):
+    request = monitoring_request(edition_id, False)
+    del request["monitored"]
+    request["qualityProfileId"] = profile_id
+    return request
+
+
+def verify_profile_edit(edition_profile):
+    before = p.snapshot()
+    profile = p.api("api/v3/qualityprofile/1")
+    profile["cutoff"] = 1
+    p.api("api/v3/qualityprofile/1", profile, "PUT")
+    empty = p.api("api/v3/movieedition", {"movieId": 1, "name": "Synthetic Profile Collector 3D IMAX",
+        "attributes": {"stereoscopic": "3d", "framing": "imax", "branding": "Synthetic Profile Collector"}})
+    p.stop()
+    clients = [SyntheticSab(1), SyntheticSab(2)]
+    SERVERS.extend(clients)
+    seed(clients, edition_profile)
+    with p.database() as db:
+        db.execute('UPDATE "MovieFiles" SET "Quality"=? WHERE "MovieId"=1',
+                   (json.dumps({"quality": 1, "revision": {"version": 1, "real": 0, "isRepack": False}}),))
+    p.start()
+    queue([1, 2])
+    original = {table: p.rows(table) for table in ["Movies", "MovieFiles", "History", "DownloadHistory"]}
+    editions = p.rows("MovieEditions")
+    body = quality_profile_request(2, 1)
+    invalid = [(2, dict(body, expectedMovieMonitored=True), 409), (2, dict(body, expectedEditionMonitored=True), 409),
+               (2, dict(body, expectedMovieFileId=None), 409), (2, dict(body, expectedQualityProfileId=1), 409),
+               (2, dict(body, expectedRuleRevision=999), 409), (2, dict(body, expectedName="Synthetic Stale Profile"), 409),
+               (2, dict(body, movieId=999999), 404), (999999, body, 404), (0, body, 400),
+               (2, dict(body, qualityProfileId=0), 400), (2, dict(body, qualityProfileId=999999), 404)]
+    for field in body:
+        missing = dict(body)
+        del missing[field]
+        invalid.append((2, missing, 400))
+    for eid, request, code in invalid:
+        try:
+            original_api("api/v3/movieedition/" + str(eid) + "/qualityprofile", request)
+        except urllib.error.HTTPError as error:
+            assert error.code == code, (eid, request, error.code, error.read().decode())
+        else:
+            raise AssertionError("Stale/incomplete profile changes must reject")
+        assert original == {table: p.rows(table) for table in original} and editions == p.rows("MovieEditions")
+    changed = p.api("api/v3/movieedition/2/qualityprofile", body)
+    assert changed["qualityProfileId"] == 1 and not changed["monitored"]
+    queue([1, 2], {41: 11, 42: 11})
+    p.api("api/v3/movieedition/1/qualityprofile", quality_profile_request(1, edition_profile))
+    p.api("api/v3/movieedition/" + str(empty["id"]) + "/qualityprofile", quality_profile_request(empty["id"], edition_profile))
+    queue([1, 2], {41: 77, 42: 11})
+    files = p.api("api/v3/moviefile?movieId=1")
+    assert {f["movieEditionId"]: f["customFormatScore"] for f in files} == {1: 77, 2: 11}
+    assert {f["movieEditionId"]: f["qualityCutoffNotMet"] for f in files} == {1: True, 2: False}
+    movie = p.api("api/v3/movie/1")
+    assert movie["qualityProfileId"] == 1 and movie["movieFile"]["qualityProfileId"] == edition_profile
+    assert movie["movieFileId"] == before[1][0] and not movie["monitored"]
+    wanted = p.api("api/v3/wanted/editioncutoff?monitored=false")["records"]
+    assert [row["id"] for row in wanted] == [1]
+    history = [row for row in p.api("api/v3/history/movie?movieId=1") if row.get("downloadId") == SHARED]
+    assert {row["movieEditionId"]: row["customFormatScore"] for row in history} == {1: 77, 2: 11}
+    assert original == {table: p.rows(table) for table in original}
+    assert p.snapshot() == before
+    # A profile disappearing after a picker was populated cannot become a new reference.
+    transient = dict(p.api("api/v3/qualityprofile/1"), name="Synthetic Removed Profile")
+    transient.pop("id")
+    transient = p.api("api/v3/qualityprofile", transient)
+    stale = quality_profile_request(2, transient["id"])
+    p.api("api/v3/qualityprofile/" + str(transient["id"]), method="DELETE")
+    try:
+        original_api("api/v3/movieedition/2/qualityprofile", stale)
+    except urllib.error.HTTPError as error:
+        assert error.code == 404
+    else:
+        raise AssertionError("Removed profiles cannot be assigned")
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=999999 WHERE "Id"=2')
+    p.start()
+    repaired = p.api("api/v3/movieedition/2/qualityprofile", quality_profile_request(2, 1))
+    assert repaired["state"] == "present" and repaired["qualityProfileId"] == 1
+    queue([1, 2], {41: 77, 42: 11})
+    assert original == {table: p.rows(table) for table in original}
+    assert p.snapshot() == before
+    print("PASS: profile API requires fresh complete state, preserves movie defaults/files/history and updates independent file/queue/history/wanted scoring across restart", flush=True)
+    # New preferences are used by fresh manual imports; only their assigned edition is replaced.
+    for target, colour in [(1, "white"), (2, "purple")]:
+        previous = p.snapshot()
+        p.manual(target, "SyntheticProfileUpgrade" + str(target), colour)
+        current = p.snapshot()
+        assert current[3 - target] == previous[3 - target]
+        p.command("RescanMovie", movieId=1)
+        p.command("RenameMovie", movieIds=[1])
+        p.stop()
+        p.start()
+        assert p.snapshot() == current
+        expected = {1: edition_profile, 2: 1}
+        assert {row["id"]: row["qualityProfileId"] for row in p.api("api/v3/movieedition?movieId=1") if row["id"] in expected} == expected
+    assert all(not client.deleted and not client.rejected for client in clients)
+    assert not any(command["name"] == "MoviesSearch" for command in p.api("api/v3/command"))
+    print("PASS: removed profiles reject and missing profiles repair without changing assignments; both editions upgrade independently under their new profiles through scan/rename/restart", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history", "edition-wanted", "edition-wanted-ui", "monitoring", "monitoring-ui"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history", "edition-wanted", "edition-wanted-ui", "monitoring", "monitoring-ui", "profile-edit"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -1401,6 +1502,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "profile-edit":
+        verify_profile_edit(secondary["id"])
+        return
     if scenario == "monitoring-ui":
         verify_monitoring(secondary["id"], True)
         return

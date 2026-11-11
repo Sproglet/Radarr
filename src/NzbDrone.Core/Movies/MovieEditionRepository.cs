@@ -17,6 +17,7 @@ namespace NzbDrone.Core.Movies
         void SetPrimaryEdition(int movieId, int editionId);
         void SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId);
         MovieEdition SetMonitoring(MovieEditionMonitoringChange change);
+        MovieEdition SetQualityProfile(MovieEditionQualityProfileChange change);
         void SetCurrentFile(int movieId, int editionId, int fileId, int? expectedFileId);
     }
 
@@ -228,6 +229,39 @@ namespace NzbDrone.Core.Movies
 
             connection.Execute(@"UPDATE ""MovieEditions"" SET ""Monitored"" = @Monitored WHERE ""Id"" = @EditionId", change, transaction);
             target.Monitored = change.Monitored;
+            transaction.Commit();
+            return target;
+        }
+
+        public MovieEdition SetQualityProfile(MovieEditionQualityProfileChange change)
+        {
+            if (change == null || change.MovieId <= 0 || change.EditionId <= 0 || change.ExpectedName == null || change.QualityProfileId <= 0)
+            {
+                throw new ArgumentException("Provide a movie and edition, complete expected state and a positive quality profile ID.");
+            }
+
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            var locked = connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", change, transaction);
+            if (locked != 1)
+            {
+                throw new ModelNotFoundException(typeof(Movie), change.MovieId);
+            }
+
+            var parent = connection.QuerySingle<Movie>(@"SELECT * FROM ""Movies"" WHERE ""Id"" = @MovieId", change, transaction);
+            var target = connection.QuerySingleOrDefault<MovieEdition>(@"SELECT * FROM ""MovieEditions"" WHERE ""Id"" = @EditionId AND ""MovieId"" = @MovieId", change, transaction);
+            if (target == null || parent.Monitored != change.ExpectedMovieMonitored || target.Monitored != change.ExpectedEditionMonitored ||
+                target.MovieFileId != change.ExpectedMovieFileId || target.QualityProfileId != change.ExpectedQualityProfileId ||
+                target.RuleRevision != change.ExpectedRuleRevision || target.Name != change.ExpectedName)
+            {
+                throw new InvalidOperationException("The movie monitoring or edition settings changed. Reload before changing the edition quality profile.");
+            }
+
+            // Preferences can be repaired even when the old profile or file link is damaged.
+            // Actual import/rename operations still validate their own ownership and destinations.
+            LockProfile(connection, transaction, change.QualityProfileId);
+            connection.Execute(@"UPDATE ""MovieEditions"" SET ""QualityProfileId"" = @QualityProfileId WHERE ""Id"" = @EditionId", change, transaction);
+            target.QualityProfileId = change.QualityProfileId;
             transaction.Commit();
             return target;
         }
