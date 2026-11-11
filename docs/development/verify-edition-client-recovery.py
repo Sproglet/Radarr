@@ -1386,7 +1386,7 @@ def quality_profile_request(edition_id, profile_id):
     return request
 
 
-def verify_profile_edit(edition_profile):
+def verify_profile_edit(edition_profile, browser=False):
     before = p.snapshot()
     profile = p.api("api/v3/qualityprofile/1")
     profile["cutoff"] = 1
@@ -1440,6 +1440,18 @@ def verify_profile_edit(edition_profile):
     assert {row["movieEditionId"]: row["customFormatScore"] for row in history} == {1: 77, 2: 11}
     assert original == {table: p.rows(table) for table in original}
     assert p.snapshot() == before
+    if browser:
+        damaged = p.api("api/v3/movieedition", {"movieId": 1, "name": "Synthetic Profile Repair",
+            "attributes": {"branding": "Synthetic Profile Repair"}})
+        p.stop()
+        with p.database() as db:
+            db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=999999 WHERE "Id"=?', (damaged["id"],))
+        p.start()
+        configure_browser_auth()
+        subprocess.run(["node", "/src/docs/development/verify-edition-profile-browser.cjs", str(edition_profile)], check=True)
+        assert original == {table: p.rows(table) for table in original}
+        assert p.snapshot() == before
+        queue([1, 2], {41: 77, 42: 11})
     # A profile disappearing after a picker was populated cannot become a new reference.
     transient = dict(p.api("api/v3/qualityprofile/1"), name="Synthetic Removed Profile")
     transient.pop("id")
@@ -1482,7 +1494,7 @@ def verify_profile_edit(edition_profile):
 
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history", "edition-wanted", "edition-wanted-ui", "monitoring", "monitoring-ui", "profile-edit"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history", "edition-wanted", "edition-wanted-ui", "monitoring", "monitoring-ui", "profile-edit", "profile-ui"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -1502,6 +1514,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "profile-ui":
+        verify_profile_edit(secondary["id"], True)
+        return
     if scenario == "profile-edit":
         verify_profile_edit(secondary["id"])
         return

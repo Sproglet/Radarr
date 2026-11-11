@@ -14,6 +14,7 @@ import { kinds } from 'Helpers/Props';
 import { Statistics } from 'Movie/Movie';
 import MovieEdition from 'Movie/MovieEdition';
 import { fetchMovies } from 'Store/Actions/movieActions';
+import { fetchMovieFiles } from 'Store/Actions/movieFileActions';
 import translate from 'Utilities/String/translate';
 import AddEditionModal from './AddEditionModal';
 import SelectPrimaryEditionModal, {
@@ -22,6 +23,9 @@ import SelectPrimaryEditionModal, {
 import SetEditionMonitoringModal, {
   MonitoringSelection,
 } from './SetEditionMonitoringModal';
+import SetEditionQualityProfileModal, {
+  ProfileSelection,
+} from './SetEditionQualityProfileModal';
 
 const columns = [
   { name: 'name', label: () => translate('Edition'), isVisible: true },
@@ -65,6 +69,23 @@ function EditionMonitoringButton({
   );
 }
 
+function EditionProfileButton({
+  edition,
+  isDisabled,
+  onSelect,
+}: {
+  edition: MovieEdition;
+  isDisabled: boolean;
+  onSelect(edition: MovieEdition): void;
+}) {
+  const onPress = useCallback(() => onSelect(edition), [edition, onSelect]);
+  return (
+    <Button isDisabled={isDisabled} onPress={onPress}>
+      {translate('ChangeEditionProfile')}
+    </Button>
+  );
+}
+
 function PrimaryEditionButton({
   edition,
   isDisabled,
@@ -94,8 +115,11 @@ function MovieEditionsTable({
   const [primarySelection, setPrimarySelection] = useState<PrimarySelection>();
   const [monitoringSelection, setMonitoringSelection] =
     useState<MonitoringSelection>();
+  const [profileSelection, setProfileSelection] = useState<ProfileSelection>();
   const [selectionError, setSelectionError] = useState<string>();
-  const { data, error, isPending, refetch } = useApiQuery<MovieEdition[]>({
+  const { data, error, isPending, isFetching, refetch } = useApiQuery<
+    MovieEdition[]
+  >({
     path: `/movieedition?movieId=${movieId}`,
     queryOptions: { staleTime: 0, refetchOnMount: 'always' },
   });
@@ -107,6 +131,7 @@ function MovieEditionsTable({
   const onCreated = useCallback(() => {
     refetch();
     dispatch(fetchMovies({ id: movieId }));
+    dispatch(fetchMovieFiles({ movieId }));
   }, [refetch, dispatch, movieId]);
 
   const onPrimaryClose = useCallback(() => setPrimarySelection(undefined), []);
@@ -119,6 +144,7 @@ function MovieEditionsTable({
     (message: string) => {
       setPrimarySelection(undefined);
       setMonitoringSelection(undefined);
+      setProfileSelection(undefined);
       setSelectionError(message);
       onCreated();
     },
@@ -137,6 +163,19 @@ function MovieEditionsTable({
     (target: MovieEdition) => {
       setSelectionError(undefined);
       setMonitoringSelection({ target, movieMonitored: monitored });
+    },
+    [monitored]
+  );
+  const onProfileClose = useCallback(() => setProfileSelection(undefined), []);
+  const onProfileSelected = useCallback(() => {
+    setProfileSelection(undefined);
+    setSelectionError(undefined);
+    onCreated();
+  }, [onCreated]);
+  const onProfilePress = useCallback(
+    (target: MovieEdition) => {
+      setSelectionError(undefined);
+      setProfileSelection({ target, movieMonitored: monitored });
     },
     [monitored]
   );
@@ -203,6 +242,11 @@ function MovieEditionsTable({
                   )}
                 </TableRowCell>
                 <TableRowCell>
+                  <EditionProfileButton
+                    edition={edition}
+                    isDisabled={isFetching || !!error}
+                    onSelect={onProfilePress}
+                  />
                   <EditionMonitoringButton
                     edition={edition}
                     onSelect={onMonitoringPress}
@@ -246,6 +290,15 @@ function MovieEditionsTable({
         onError={onActionError}
         onClose={onMonitoringClose}
       />
+      {profileSelection ? (
+        <SetEditionQualityProfileModal
+          movieId={movieId}
+          selection={profileSelection}
+          onSelected={onProfileSelected}
+          onError={onActionError}
+          onClose={onProfileClose}
+        />
+      ) : null}
       <AddEditionModal
         isOpen={isAdding}
         movieId={movieId}

@@ -1,4 +1,9 @@
 {
+  "ChangeEditionProfile": "Change Edition Profile",
+  "EditionProfileScopeHelpText": "This quality profile applies to '{edition}'. New editions continue to use the movie default. Existing files are kept.",
+  "EditionProfileUnavailable": "Unavailable profile ({id})",
+  "EditionProfileFailed": "Unable to change the edition profile. Reload the movie and try again.",
+  "EditionProfileLoadFailed": "Unable to load quality profiles. Close this dialog and try again.",
   "MonitorEdition": "Monitor Edition",
   "UnmonitorEdition": "Unmonitor Edition",
   "MonitorEditionConfirm": "Enable monitoring for '{edition}'? Existing downloads continue. Automatic multi-edition downloads remain disabled.",
