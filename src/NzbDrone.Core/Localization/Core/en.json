@@ -2139,5 +2139,9 @@
   "YesCancel": "Yes, Cancel",
   "Yesterday": "Yesterday",
   "YesterdayAt": "Yesterday at {time}",
-  "YouCanAlsoSearch": "You can also search using TMDb ID or IMDb ID of a movie. e.g. `tmdb:71663`"
+  "YouCanAlsoSearch": "You can also search using TMDb ID or IMDb ID of a movie. e.g. `tmdb:71663`",
+    "EditEditionDefinition": "Edit Definition",
+    "EditionDefinitionScopeHelpText": "Update this edition’s name, attributes and matching rules. Existing files and downloads keep their assignments. Use Rename separately to apply filename changes. Monitoring and quality profiles are changed separately.",
+    "EditionDefinitionFailed": "Unable to update this edition definition. Review its state and try again.",
+    "EditionNormalizedAttributes": "Attributes after normalization"
 }

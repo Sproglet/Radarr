@@ -34,6 +34,7 @@ export interface EditionNamingPreview {
   referenceMovieFileId?: number;
   namingValid: boolean;
   creationEnabled: boolean;
+  editingEnabled?: boolean;
   rejections: string[];
   samples: { movieEditionId?: number; name: string; relativePath: string }[];
 }

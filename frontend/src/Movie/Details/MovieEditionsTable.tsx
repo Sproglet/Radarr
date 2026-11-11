@@ -17,6 +17,9 @@ import { fetchMovies } from 'Store/Actions/movieActions';
 import { fetchMovieFiles } from 'Store/Actions/movieFileActions';
 import translate from 'Utilities/String/translate';
 import AddEditionModal from './AddEditionModal';
+import EditEditionDefinitionModal, {
+  DefinitionSelection,
+} from './EditEditionDefinitionModal';
 import SelectPrimaryEditionModal, {
   PrimarySelection,
 } from './SelectPrimaryEditionModal';
@@ -69,6 +72,23 @@ function EditionMonitoringButton({
   );
 }
 
+function EditionDefinitionButton({
+  edition,
+  isDisabled,
+  onSelect,
+}: {
+  edition: MovieEdition;
+  isDisabled: boolean;
+  onSelect(edition: MovieEdition): void;
+}) {
+  const onPress = useCallback(() => onSelect(edition), [edition, onSelect]);
+  return (
+    <Button isDisabled={isDisabled} onPress={onPress}>
+      {translate('EditEditionDefinition')}
+    </Button>
+  );
+}
+
 function EditionProfileButton({
   edition,
   isDisabled,
@@ -116,6 +136,8 @@ function MovieEditionsTable({
   const [monitoringSelection, setMonitoringSelection] =
     useState<MonitoringSelection>();
   const [profileSelection, setProfileSelection] = useState<ProfileSelection>();
+  const [definitionSelection, setDefinitionSelection] =
+    useState<DefinitionSelection>();
   const [selectionError, setSelectionError] = useState<string>();
   const { data, error, isPending, isFetching, refetch } = useApiQuery<
     MovieEdition[]
@@ -145,6 +167,7 @@ function MovieEditionsTable({
       setPrimarySelection(undefined);
       setMonitoringSelection(undefined);
       setProfileSelection(undefined);
+      setDefinitionSelection(undefined);
       setSelectionError(message);
       onCreated();
     },
@@ -167,6 +190,22 @@ function MovieEditionsTable({
     [monitored]
   );
   const onProfileClose = useCallback(() => setProfileSelection(undefined), []);
+  const onDefinitionClose = useCallback(
+    () => setDefinitionSelection(undefined),
+    []
+  );
+  const onDefinitionSaved = useCallback(() => {
+    setDefinitionSelection(undefined);
+    setSelectionError(undefined);
+    onCreated();
+  }, [onCreated]);
+  const onDefinitionPress = useCallback(
+    (target: MovieEdition) => {
+      setSelectionError(undefined);
+      setDefinitionSelection({ target, movieMonitored: monitored });
+    },
+    [monitored]
+  );
   const onProfileSelected = useCallback(() => {
     setProfileSelection(undefined);
     setSelectionError(undefined);
@@ -247,6 +286,11 @@ function MovieEditionsTable({
                     isDisabled={isFetching || !!error}
                     onSelect={onProfilePress}
                   />
+                  <EditionDefinitionButton
+                    edition={edition}
+                    isDisabled={isFetching || !!error}
+                    onSelect={onDefinitionPress}
+                  />
                   <EditionMonitoringButton
                     edition={edition}
                     onSelect={onMonitoringPress}
@@ -297,6 +341,14 @@ function MovieEditionsTable({
           onSelected={onProfileSelected}
           onError={onActionError}
           onClose={onProfileClose}
+        />
+      ) : null}
+      {definitionSelection ? (
+        <EditEditionDefinitionModal
+          selection={definitionSelection}
+          onSaved={onDefinitionSaved}
+          onError={onActionError}
+          onClose={onDefinitionClose}
         />
       ) : null}
       <AddEditionModal

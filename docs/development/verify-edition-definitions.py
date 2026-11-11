@@ -8,6 +8,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import subprocess
 import urllib.error
 
 sys.dont_write_bytecode = True
@@ -38,7 +39,7 @@ def rejected(eid, body, code, preview=False):
         raise AssertionError("Invalid or stale definitions must reject")
 
 
-def run(postgres):
+def run(postgres, browser=False):
     if postgres:
         p.DATABASE.enable_postgres()
     p.run()
@@ -50,6 +51,13 @@ def run(postgres):
     p.stop()
     c.seed(clients, secondary)
     p.start()
+    if browser:
+        before_browser = {table: p.rows(table) for table in ["Movies", "MovieFiles", "SubtitleFiles", "History", "DownloadHistory"]}
+        before_browser_media = p.snapshot()
+        c.configure_browser_auth()
+        subprocess.run(["node", "/src/docs/development/verify-edition-definitions-browser.cjs", str(empty["id"]), str(p.MOVIE)], check=True)
+        assert before_browser == {table: p.rows(table) for table in before_browser}
+        assert p.snapshot() == before_browser_media
     initial_queue = c.queue([1, 2])
     original = {table: p.rows(table) for table in ["Movies", "MovieFiles", "SubtitleFiles", "History", "DownloadHistory"]}
     definitions = p.rows("MovieEditions")
@@ -147,9 +155,9 @@ def run(postgres):
 
 if __name__ == "__main__":
     try:
-        if sys.argv[1:] not in ([], ["--postgres"]):
-            raise ValueError("Only --postgres is supported")
-        run(sys.argv[1:] == ["--postgres"])
+        if any(arg not in {"--postgres", "--browser"} for arg in sys.argv[1:]) or len(set(sys.argv[1:])) != len(sys.argv[1:]):
+            raise ValueError("Only --postgres and --browser are supported")
+        run("--postgres" in sys.argv[1:], "--browser" in sys.argv[1:])
     finally:
         p.stop()
         try:
