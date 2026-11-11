@@ -8,6 +8,7 @@ using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Processes;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.HealthCheck;
 using NzbDrone.Core.Localization;
@@ -29,6 +30,7 @@ namespace NzbDrone.Core.Notifications.CustomScript
         private readonly IProcessProvider _processProvider;
         private readonly ITagRepository _tagRepository;
         private readonly ILocalizationService _localizationService;
+        private readonly INotificationMovieEditionService _editionService;
         private readonly Logger _logger;
 
         public CustomScript(IConfigFileProvider configFileProvider,
@@ -37,6 +39,7 @@ namespace NzbDrone.Core.Notifications.CustomScript
             IProcessProvider processProvider,
             ITagRepository tagRepository,
             ILocalizationService localizationService,
+            INotificationMovieEditionService editionService,
             Logger logger)
         {
             _configFileProvider = configFileProvider;
@@ -45,6 +48,7 @@ namespace NzbDrone.Core.Notifications.CustomScript
             _processProvider = processProvider;
             _tagRepository = tagRepository;
             _localizationService = localizationService;
+            _editionService = editionService;
             _logger = logger;
         }
 
@@ -87,6 +91,7 @@ namespace NzbDrone.Core.Notifications.CustomScript
             environmentVariables.Add("Radarr_Download_Id", message.DownloadId ?? string.Empty);
             environmentVariables.Add("Radarr_Release_CustomFormat", string.Join("|", remoteMovie.CustomFormats));
             environmentVariables.Add("Radarr_Release_CustomFormatScore", remoteMovie.CustomFormatScore.ToString());
+            AddEditionVariables(environmentVariables, _editionService.ForRelease(remoteMovie));
 
             ExecuteScript(environmentVariables);
         }
@@ -140,6 +145,7 @@ namespace NzbDrone.Core.Notifications.CustomScript
             environmentVariables.Add("Radarr_Release_Indexer", message.Release?.Indexer);
             environmentVariables.Add("Radarr_Release_Size", message.Release?.Size.ToString());
             environmentVariables.Add("Radarr_Release_Title", message.Release?.Title);
+            AddEditionVariables(environmentVariables, _editionService.ForFile(movieFile));
 
             if (message.OldMovieFiles.Any())
             {
@@ -147,6 +153,12 @@ namespace NzbDrone.Core.Notifications.CustomScript
                 environmentVariables.Add("Radarr_DeletedPaths", string.Join("|", message.OldMovieFiles.Select(e => Path.Combine(movie.Path, e.MovieFile.RelativePath))));
                 environmentVariables.Add("Radarr_DeletedDateAdded", string.Join("|", message.OldMovieFiles.Select(e => e.MovieFile.DateAdded)));
                 environmentVariables.Add("Radarr_DeletedRecycleBinPaths", string.Join("|", message.OldMovieFiles.Select(e => e.RecycleBinPath ?? string.Empty)));
+                environmentVariables.Add("Radarr_DeletedMovieFile_Editions", message.OldMovieFiles.Select(e => new
+                {
+                    MovieFileId = e.MovieFile.Id,
+                    MovieEditionId = e.MovieFile.MovieEditionId,
+                    MovieEdition = _editionService.ForFile(e.MovieFile)
+                }).ToJson());
             }
 
             ExecuteScript(environmentVariables);
@@ -175,6 +187,13 @@ namespace NzbDrone.Core.Notifications.CustomScript
             environmentVariables.Add("Radarr_MovieFile_Paths", string.Join("|", renamedFiles.Select(e => Path.Combine(movie.Path, e.MovieFile.RelativePath))));
             environmentVariables.Add("Radarr_MovieFile_PreviousRelativePaths", string.Join("|", renamedFiles.Select(e => e.PreviousRelativePath)));
             environmentVariables.Add("Radarr_MovieFile_PreviousPaths", string.Join("|", renamedFiles.Select(e => e.PreviousPath)));
+            environmentVariables.Add("Radarr_MovieFile_MovieEditionIds", string.Join(",", renamedFiles.Select(e => e.MovieFile.MovieEditionId?.ToString() ?? string.Empty)));
+            environmentVariables.Add("Radarr_MovieFile_Editions", renamedFiles.Select(e => new
+            {
+                MovieFileId = e.MovieFile.Id,
+                MovieEditionId = e.MovieFile.MovieEditionId,
+                MovieEdition = _editionService.ForFile(e.MovieFile)
+            }).ToJson());
 
             ExecuteScript(environmentVariables);
         }
@@ -229,6 +248,7 @@ namespace NzbDrone.Core.Notifications.CustomScript
             environmentVariables.Add("Radarr_MovieFile_QualityVersion", movieFile.Quality.Revision.Version.ToString());
             environmentVariables.Add("Radarr_MovieFile_ReleaseGroup", movieFile.ReleaseGroup ?? string.Empty);
             environmentVariables.Add("Radarr_MovieFile_SceneName", movieFile.SceneName ?? string.Empty);
+            AddEditionVariables(environmentVariables, _editionService.ForFile(movieFile));
 
             ExecuteScript(environmentVariables);
         }
@@ -328,6 +348,8 @@ namespace NzbDrone.Core.Notifications.CustomScript
             environmentVariables.Add("Radarr_Download_Id", message.DownloadId ?? string.Empty);
             environmentVariables.Add("Radarr_Download_Size", message.TrackedDownload.DownloadItem?.TotalSize.ToString() ?? string.Empty);
             environmentVariables.Add("Radarr_Download_Title", message.TrackedDownload.DownloadItem?.Title ?? string.Empty);
+            AddEditionVariables(environmentVariables, _editionService.ForRelease(message.RemoteMovie));
+            environmentVariables.Add("Radarr_MovieEdition_RecoveryError", message.RemoteMovie?.EditionRecoveryError ?? message.TrackedDownload.EditionRecoveryError ?? string.Empty);
 
             ExecuteScript(environmentVariables);
         }
@@ -367,6 +389,17 @@ namespace NzbDrone.Core.Notifications.CustomScript
             }
 
             return new ValidationResult(failures);
+        }
+
+        private static void AddEditionVariables(StringDictionary variables, NotificationMovieEdition edition)
+        {
+            variables.Add("Radarr_MovieEdition_Id", edition?.Id.ToString() ?? string.Empty);
+            variables.Add("Radarr_MovieEdition_Name", edition?.Name ?? string.Empty);
+            variables.Add("Radarr_MovieEdition_QualityProfileId", edition?.QualityProfileId?.ToString() ?? string.Empty);
+            variables.Add("Radarr_MovieEdition_RuleRevision", edition?.RuleRevision?.ToString() ?? string.Empty);
+            variables.Add("Radarr_MovieEdition_IsResolved", edition?.IsResolved.ToString() ?? string.Empty);
+            variables.Add("Radarr_MovieEdition_Error", edition?.Error ?? string.Empty);
+            variables.Add("Radarr_MovieEdition", edition == null ? string.Empty : edition.ToJson());
         }
 
         private ProcessOutput ExecuteScript(StringDictionary environmentVariables)

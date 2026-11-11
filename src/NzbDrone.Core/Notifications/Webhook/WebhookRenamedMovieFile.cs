@@ -4,8 +4,8 @@ namespace NzbDrone.Core.Notifications.Webhook
 {
     public class WebhookRenamedMovieFile : WebhookMovieFile
     {
-        public WebhookRenamedMovieFile(RenamedMovieFile renamedMovie)
-            : base(renamedMovie.MovieFile)
+        public WebhookRenamedMovieFile(RenamedMovieFile renamedMovie, NotificationMovieEdition edition = null)
+            : base(renamedMovie.MovieFile, edition)
         {
             PreviousRelativePath = renamedMovie.PreviousRelativePath;
             PreviousPath = renamedMovie.PreviousPath;

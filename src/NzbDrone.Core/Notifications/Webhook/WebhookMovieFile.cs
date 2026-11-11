@@ -11,9 +11,11 @@ namespace NzbDrone.Core.Notifications.Webhook
         {
         }
 
-        public WebhookMovieFile(MovieFile movieFile)
+        public WebhookMovieFile(MovieFile movieFile, NotificationMovieEdition edition = null)
         {
             Id = movieFile.Id;
+            MovieEditionId = movieFile.MovieEditionId;
+            MovieEdition = edition;
             RelativePath = movieFile.RelativePath;
             Path = System.IO.Path.Combine(movieFile.Movie.Path, movieFile.RelativePath);
             Quality = movieFile.Quality.Quality.Name;
@@ -32,6 +34,8 @@ namespace NzbDrone.Core.Notifications.Webhook
         }
 
         public int Id { get; set; }
+        public int? MovieEditionId { get; set; }
+        public NotificationMovieEdition MovieEdition { get; set; }
         public string RelativePath { get; set; }
         public string Path { get; set; }
         public string Quality { get; set; }

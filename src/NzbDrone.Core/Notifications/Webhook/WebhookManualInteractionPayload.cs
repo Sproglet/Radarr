@@ -5,6 +5,8 @@ namespace NzbDrone.Core.Notifications.Webhook
     public class WebhookManualInteractionPayload : WebhookPayload
     {
         public WebhookMovie Movie { get; set; }
+        public NotificationMovieEdition MovieEdition { get; set; }
+        public string EditionRecoveryError { get; set; }
         public WebhookDownloadClientItem DownloadInfo { get; set; }
         public string DownloadClient { get; set; }
         public string DownloadClientType { get; set; }

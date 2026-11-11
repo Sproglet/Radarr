@@ -19,14 +19,16 @@ namespace NzbDrone.Core.Notifications.Webhook
         protected readonly ILocalizationService _localizationService;
         private readonly ITagRepository _tagRepository;
         private readonly IMapCoversToLocal _mediaCoverService;
+        private readonly INotificationMovieEditionService _editionService;
 
-        protected WebhookBase(IConfigFileProvider configFileProvider, IConfigService configService, ILocalizationService localizationService, ITagRepository tagRepository, IMapCoversToLocal mediaCoverService)
+        protected WebhookBase(IConfigFileProvider configFileProvider, IConfigService configService, ILocalizationService localizationService, ITagRepository tagRepository, IMapCoversToLocal mediaCoverService, INotificationMovieEditionService editionService)
         {
             _configFileProvider = configFileProvider;
             _configService = configService;
             _localizationService = localizationService;
             _tagRepository = tagRepository;
             _mediaCoverService = mediaCoverService;
+            _editionService = editionService;
         }
 
         protected WebhookGrabPayload BuildOnGrabPayload(GrabMessage message)
@@ -41,6 +43,7 @@ namespace NzbDrone.Core.Notifications.Webhook
                 ApplicationUrl = _configService.ApplicationUrl,
                 Movie = GetMovie(message.Movie),
                 RemoteMovie = new WebhookRemoteMovie(remoteMovie),
+                MovieEdition = _editionService.ForRelease(remoteMovie),
                 Release = new WebhookRelease(quality, remoteMovie),
                 DownloadClient = message.DownloadClientName,
                 DownloadClientType = message.DownloadClientType,
@@ -52,6 +55,7 @@ namespace NzbDrone.Core.Notifications.Webhook
         protected WebhookImportPayload BuildOnDownloadPayload(DownloadMessage message)
         {
             var movieFile = message.MovieFile;
+            var edition = _editionService.ForFile(movieFile);
 
             var payload = new WebhookImportPayload
             {
@@ -60,7 +64,8 @@ namespace NzbDrone.Core.Notifications.Webhook
                 ApplicationUrl = _configService.ApplicationUrl,
                 Movie = GetMovie(message.Movie),
                 RemoteMovie = new WebhookRemoteMovie(message.Movie),
-                MovieFile = new WebhookMovieFile(movieFile)
+                MovieEdition = edition,
+                MovieFile = new WebhookMovieFile(movieFile, edition)
                 {
                     SourcePath = message.SourcePath
                 },
@@ -75,7 +80,7 @@ namespace NzbDrone.Core.Notifications.Webhook
             if (message.OldMovieFiles.Any())
             {
                 payload.DeletedFiles = message.OldMovieFiles.ConvertAll(x =>
-                    new WebhookMovieFile(x.MovieFile)
+                    new WebhookMovieFile(x.MovieFile, _editionService.ForFile(x.MovieFile))
                     {
                         Path = Path.Combine(message.Movie.Path, x.MovieFile.RelativePath),
                         RecycleBinPath = x.RecycleBinPath
@@ -105,7 +110,7 @@ namespace NzbDrone.Core.Notifications.Webhook
                 InstanceName = _configFileProvider.InstanceName,
                 ApplicationUrl = _configService.ApplicationUrl,
                 Movie = GetMovie(deleteMessage.Movie),
-                MovieFile = new WebhookMovieFile(deleteMessage.MovieFile),
+                MovieFile = new WebhookMovieFile(deleteMessage.MovieFile, _editionService.ForFile(deleteMessage.MovieFile)),
                 DeleteReason = deleteMessage.Reason
             };
         }
@@ -137,7 +142,7 @@ namespace NzbDrone.Core.Notifications.Webhook
                 InstanceName = _configFileProvider.InstanceName,
                 ApplicationUrl = _configService.ApplicationUrl,
                 Movie = GetMovie(movie),
-                RenamedMovieFiles = renamedFiles.ConvertAll(x => new WebhookRenamedMovieFile(x))
+                RenamedMovieFiles = renamedFiles.ConvertAll(x => new WebhookRenamedMovieFile(x, _editionService.ForFile(x.MovieFile)))
             };
         }
 
@@ -193,6 +198,8 @@ namespace NzbDrone.Core.Notifications.Webhook
                 ApplicationUrl = _configService.ApplicationUrl,
                 Movie = GetMovie(message.Movie),
                 DownloadInfo = new WebhookDownloadClientItem(quality, message.TrackedDownload.DownloadItem),
+                MovieEdition = _editionService.ForRelease(remoteMovie),
+                EditionRecoveryError = remoteMovie?.EditionRecoveryError ?? message.TrackedDownload.EditionRecoveryError,
                 DownloadClient = message.DownloadClientInfo?.Name,
                 DownloadClientType = message.DownloadClientInfo?.Type,
                 DownloadId = message.DownloadId,
