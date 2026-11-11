@@ -13,6 +13,7 @@ namespace NzbDrone.Core.Movies
     {
         MovieEdition Create(MovieEdition proposal);
         MovieEdition SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId);
+        MovieEdition SetMonitoring(MovieEditionMonitoringChange change);
     }
 
     public class MovieEditionManagementService : IMovieEditionManagementService
@@ -93,6 +94,33 @@ namespace NzbDrone.Core.Movies
             var edition = preview.ProposedEdition;
             edition.EditionKey = "custom-" + Guid.NewGuid().ToString("N");
             return _editions.CreateUnmonitored(edition, movie, expected);
+        }
+
+        public MovieEdition SetMonitoring(MovieEditionMonitoringChange change)
+        {
+            if (change == null || change.MovieId <= 0 || change.EditionId <= 0 || change.ExpectedName == null)
+            {
+                throw new ArgumentException("Provide a movie, edition and complete expected monitoring state.");
+            }
+
+            Movie movie;
+            MovieEdition target;
+            using (MovieEditionAcquisitionGate.Acquire(change.MovieId))
+            using (MovieFileOperationLock.Acquire(change.MovieId))
+            {
+                _ = _movies.Find(change.MovieId) ?? throw new ModelNotFoundException(typeof(Movie), change.MovieId);
+                target = _editions.Find(change.EditionId) ?? throw new ModelNotFoundException(typeof(MovieEdition), change.EditionId);
+                if (target.MovieId != change.MovieId)
+                {
+                    throw new InvalidOperationException("The selected edition does not belong to this movie.");
+                }
+
+                target = _editions.SetMonitoring(change);
+                movie = _movies.Get(change.MovieId);
+            }
+
+            _events.PublishEvent(new MovieUpdatedEvent(movie));
+            return target;
         }
     }
 }

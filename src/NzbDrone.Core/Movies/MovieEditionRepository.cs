@@ -16,6 +16,7 @@ namespace NzbDrone.Core.Movies
         MovieEdition CreateUnmonitored(MovieEdition edition, Movie expectedMovie, List<MovieEdition> expectedEditions);
         void SetPrimaryEdition(int movieId, int editionId);
         void SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId);
+        MovieEdition SetMonitoring(MovieEditionMonitoringChange change);
         void SetCurrentFile(int movieId, int editionId, int fileId, int? expectedFileId);
     }
 
@@ -182,6 +183,53 @@ namespace NzbDrone.Core.Movies
                 (current.MatchRules ?? new()).SequenceEqual(expected.MatchRules ?? new()) &&
                 (current.Attributes ?? new()).Count == (expected.Attributes ?? new()).Count &&
                 (current.Attributes ?? new()).All(a => (expected.Attributes ?? new()).TryGetValue(a.Key, out var value) && value == a.Value);
+        }
+
+        public MovieEdition SetMonitoring(MovieEditionMonitoringChange change)
+        {
+            if (change == null || change.MovieId <= 0 || change.EditionId <= 0 || change.ExpectedName == null)
+            {
+                throw new ArgumentException("Provide a movie, edition and complete expected monitoring state.");
+            }
+
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            var locked = connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", change, transaction);
+            if (locked != 1)
+            {
+                throw new ModelNotFoundException(typeof(Movie), change.MovieId);
+            }
+
+            var parent = connection.QuerySingle<Movie>(@"SELECT * FROM ""Movies"" WHERE ""Id"" = @MovieId", change, transaction);
+            var target = connection.QuerySingleOrDefault<MovieEdition>(@"SELECT * FROM ""MovieEditions"" WHERE ""Id"" = @EditionId AND ""MovieId"" = @MovieId", change, transaction);
+            if (target == null || parent.Monitored != change.ExpectedMovieMonitored || target.Monitored != change.ExpectedEditionMonitored ||
+                target.MovieFileId != change.ExpectedMovieFileId || target.QualityProfileId != change.ExpectedQualityProfileId ||
+                target.RuleRevision != change.ExpectedRuleRevision || target.Name != change.ExpectedName)
+            {
+                throw new InvalidOperationException("The movie monitoring or edition settings changed. Reload before changing edition monitoring.");
+            }
+
+            if (change.Monitored)
+            {
+                LockProfile(connection, transaction, target.QualityProfileId);
+                MovieEditionClassifier.ValidateRules(target.MatchRules);
+                if (target.MovieFileId.HasValue)
+                {
+                    var valid = connection.ExecuteScalar<bool>(@"SELECT EXISTS (SELECT 1 FROM ""MovieFiles"" f
+                        WHERE f.""Id"" = @MovieFileId AND f.""MovieId"" = @MovieId AND f.""MovieEditionId"" = @Id
+                          AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" other
+                            WHERE other.""MovieFileId"" = f.""Id"" AND other.""Id"" <> @Id))", target, transaction);
+                    if (!valid)
+                    {
+                        throw new InvalidOperationException("Repair the edition's current-file ownership before enabling monitoring.");
+                    }
+                }
+            }
+
+            connection.Execute(@"UPDATE ""MovieEditions"" SET ""Monitored"" = @Monitored WHERE ""Id"" = @EditionId", change, transaction);
+            target.Monitored = change.Monitored;
+            transaction.Commit();
+            return target;
         }
 
         public void SetPrimaryEdition(int movieId, int editionId)

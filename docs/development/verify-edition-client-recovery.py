@@ -1263,9 +1263,106 @@ def verify_edition_wanted(edition_profile, browser=False):
     print("PASS: invalid paging rejects, invalid ownership/profiles remain diagnostic, legacy wanted stays movie-based and all media/history survive restart without acquisition", flush=True)
 
 
+def monitoring_request(edition_id, monitored):
+    edition = p.api("api/v3/movieedition/" + str(edition_id))
+    movie = p.api("api/v3/movie/" + str(edition["movieId"]))
+    return {"movieId": edition["movieId"], "monitored": monitored, "expectedMovieMonitored": movie["monitored"],
+            "expectedEditionMonitored": edition["monitored"], "expectedMovieFileId": edition.get("movieFileId"),
+            "expectedQualityProfileId": edition["qualityProfileId"], "expectedRuleRevision": edition["ruleRevision"],
+            "expectedName": edition["name"]}
+
+
+def verify_monitoring(edition_profile):
+    before = p.snapshot()
+    empty = p.api("api/v3/movieedition", {"movieId": 1, "name": "Synthetic Monitoring Collector 3D IMAX",
+        "attributes": {"stereoscopic": "3d", "framing": "imax", "branding": "Synthetic Monitoring Collector"}})
+    p.stop()
+    clients = [SyntheticSab(1), SyntheticSab(2)]
+    SERVERS.extend(clients)
+    seed(clients, edition_profile)
+    p.start()
+    queue([1, 2])
+    original = {table: p.rows(table) for table in ["Movies", "MovieFiles", "History", "DownloadHistory"]}
+    editions = p.rows("MovieEditions")
+    body = monitoring_request(2, True)
+    invalid = [(2, dict(body, expectedMovieMonitored=True), 409),
+               (2, dict(body, expectedEditionMonitored=True), 409), (2, dict(body, expectedMovieFileId=None), 409),
+               (2, dict(body, expectedQualityProfileId=999999), 409), (2, dict(body, expectedRuleRevision=999), 409),
+               (2, dict(body, expectedName="Synthetic Wrong Confirmation"), 409),
+               (2, dict(body, movieId=999999), 404), (999999, body, 404), (0, body, 400)]
+    for field in ["monitored", "expectedMovieMonitored", "expectedEditionMonitored", "expectedMovieFileId", "expectedQualityProfileId", "expectedRuleRevision", "expectedName"]:
+        missing = dict(body)
+        del missing[field]
+        invalid.append((2, missing, 400))
+    for eid, request, code in invalid:
+        try:
+            original_api("api/v3/movieedition/" + str(eid) + "/monitoring", request)
+        except urllib.error.HTTPError as error:
+            assert error.code == code, (eid, request, error.code, error.read().decode())
+        else:
+            raise AssertionError("Stale/incomplete monitoring must reject")
+        assert original == {table: p.rows(table) for table in original} and editions == p.rows("MovieEditions")
+    enabled = p.api("api/v3/movieedition/2/monitoring", body)
+    assert enabled["monitored"] and not enabled["effectiveMonitored"]
+    assert not p.api("api/v3/movie/1")["monitored"]
+    assert original == {table: p.rows(table) for table in original}
+    assert p.rows("MovieEditions") == [dict(row, Monitored=True) if row["Id"] == 2 else row for row in editions]
+    p.api("api/v3/movieedition/" + str(empty["id"]) + "/monitoring", monitoring_request(empty["id"], True))
+    master = p.api("api/v3/movie/1")
+    master["monitored"] = True
+    p.api("api/v3/movie/1", master, "PUT")
+    targets = p.api("api/v3/movieedition?movieId=1")
+    assert {row["id"] for row in targets if row["effectiveMonitored"]} == {2, empty["id"]}
+    wanted = p.api("api/v3/wanted/editionmissing")["records"]
+    assert [row["id"] for row in wanted] == [empty["id"]]
+    assert p.api("api/v3/movie/1")["monitoredEditionCount"] == 2
+    try:
+        original_api("api/v3/movieedition/2/monitoring", body)
+    except urllib.error.HTTPError as error:
+        assert error.code == 409
+    else:
+        raise AssertionError("An earlier confirmation must not apply after master/target changes")
+    p.api("api/v3/movieedition/2/monitoring", monitoring_request(2, False))
+    assert p.api("api/v3/movie/1")["monitored"]
+    assert not p.api("api/v3/movieedition/2")["monitored"]
+    p.stop()
+    p.start()
+    queue([1, 2])
+    assert p.snapshot() == before
+    assert p.rows("History") == original["History"] and p.rows("DownloadHistory") == original["DownloadHistory"]
+    assert p.api("api/v3/movieedition/" + str(empty["id"]))["effectiveMonitored"]
+    # Broken metadata can be disabled, but cannot be activated by skipping context validation.
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=999999 WHERE "Id"=2')
+    p.start()
+    try:
+        original_api("api/v3/movieedition/2/monitoring", monitoring_request(2, True))
+    except urllib.error.HTTPError as error:
+        assert error.code == 404, (error.code, error.read().decode())
+    else:
+        raise AssertionError("An invalid target profile must not be activated")
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "Monitored"=TRUE WHERE "Id"=2')
+    p.start()
+    disabled = p.api("api/v3/movieedition/2/monitoring", monitoring_request(2, False))
+    assert not disabled["monitored"] and disabled["state"] == "invalid" and disabled["qualityProfileId"] == 999999
+    p.stop()
+    with p.database() as db:
+        db.execute('UPDATE "MovieEditions" SET "QualityProfileId"=? WHERE "Id"=2', (edition_profile,))
+    p.start()
+    queue([1, 2])
+    assert p.snapshot() == before and p.rows("History") == original["History"] and p.rows("DownloadHistory") == original["DownloadHistory"]
+    assert all(not client.deleted and not client.rejected for client in clients)
+    assert not any(command["name"] == "MoviesSearch" for command in p.api("api/v3/command"))
+    print("PASS: monitoring API requires fresh complete state, preserves the master switch/other targets and exposes correct wanted/statistics state across restart", flush=True)
+    print("PASS: invalid targets can be disabled but not activated; existing client/edition assignments, file/subtitle bytes/IDs and history survive without search or acquisition", flush=True)
+
+
 def run():
     scenario = sys.argv[1] if len(sys.argv) > 1 else "ignore"
-    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history", "edition-wanted", "edition-wanted-ui"}:
+    if scenario not in {"ignore", "completed", "failure", "bulk", "manual", "manual-ui", "edition-read", "manual-select", "profiles", "naming-preview", "statistics", "wanted", "creation", "creation-ui", "bulk-files", "file-profiles", "primary-context", "primary-selection", "activity-contexts", "file-history", "edition-wanted", "edition-wanted-ui", "monitoring"}:
         raise ValueError("Unknown synthetic-client scenario: " + scenario)
     if sys.argv[2:] == ["--postgres"]:
         p.DATABASE.enable_postgres()
@@ -1285,6 +1382,9 @@ def run():
         verify_naming_preview()
         return
     secondary = configure_profiles()
+    if scenario == "monitoring":
+        verify_monitoring(secondary["id"])
+        return
     if scenario == "edition-wanted-ui":
         verify_edition_wanted(secondary["id"], True)
         return
