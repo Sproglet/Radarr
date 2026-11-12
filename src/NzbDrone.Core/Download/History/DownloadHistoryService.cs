@@ -142,12 +142,17 @@ namespace NzbDrone.Core.Download.History
 
         public void Handle(MovieGrabbedEvent message)
         {
-            // Don't store grabbed events for clients that don't download IDs
+            // Don't store grabbed events for clients that don't provide download IDs.
             if (message.DownloadId.IsNullOrWhiteSpace())
             {
                 return;
             }
 
+            _repository.Insert(CreateGrabHistory(message));
+        }
+
+        internal static DownloadHistory CreateGrabHistory(MovieGrabbedEvent message)
+        {
             var history = new DownloadHistory
             {
                 EventType = DownloadHistoryEventType.DownloadGrabbed,
@@ -157,7 +162,7 @@ namespace NzbDrone.Core.Download.History
                 EditionRuleRevision = message.Movie.EditionEvaluation?.Classification?.RuleRevision ?? message.Movie.EditionContext?.Edition.RuleRevision,
                 DownloadId = message.DownloadId,
                 SourceTitle = message.Movie.Release.Title,
-                Date = DateTime.UtcNow,
+                Date = message.EditionGrabbedAt ?? DateTime.UtcNow,
                 Protocol = message.Movie.Release.DownloadProtocol,
                 IndexerId = message.Movie.Release.IndexerId,
                 DownloadClientId = message.DownloadClientId,
@@ -174,7 +179,7 @@ namespace NzbDrone.Core.Download.History
             history.Data.Add("DownloadClientName", message.DownloadClientName);
 
             history.Data.Add("CustomFormatScore", message.Movie.CustomFormatScore.ToString());
-            _repository.Insert(history);
+            return history;
         }
 
         public void Handle(MovieFileImportedEvent message)

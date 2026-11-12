@@ -349,5 +349,176 @@ namespace NzbDrone.Core.Test.MovieTests
                 AND table_name = 'MovieEditionSubmissions' AND column_name IN ('CreatedAt','UpdatedAt')")
                 .Should().HaveCount(2).And.OnlyContain(t => t == "timestamp with time zone");
         }
+
+        [Test]
+        public void atomic_grabs_replay_saved_metadata_after_definition_edits()
+        {
+            var request = Intent();
+            request.Release.PublishDate = DateTime.UtcNow.AddDays(-2);
+            request.CustomFormatScore = 77;
+            request.Languages = new() { NzbDrone.Core.Languages.Language.English, NzbDrone.Core.Languages.Language.French };
+            var intent = _journal.Prepare(request);
+            _edition.Name = "Synthetic Changed Name";
+            _edition.MatchRules.Add("ChangedSyntheticGroup$");
+            Mocker.Resolve<MovieEditionRepository>().Update(_edition);
+            _journal.Accept(intent.OperationId, "synthetic-download");
+
+            _journal.RecordGrabs(intent.OperationId);
+            var history = Mocker.Resolve<HistoryRepository>().All().Single();
+            var download = Mocker.Resolve<DownloadHistoryRepository>().All().Single();
+            var savedData = history.Data.ToDictionary(pair => pair.Key, pair => pair.Value);
+            Thread.Sleep(20);
+            Mocker.Resolve<MovieEditionSubmissionRepository>().RecordGrabs(intent.OperationId);
+
+            Mocker.Resolve<HistoryRepository>().All().Should().ContainSingle().Which.Id.Should().Be(history.Id);
+            Mocker.Resolve<DownloadHistoryRepository>().All().Should().ContainSingle().Which.Id.Should().Be(download.Id);
+            Mocker.Resolve<HistoryRepository>().Get(history.Id).Data.Should().BeEquivalentTo(savedData);
+            history.Data["movieEditionName"].Should().Be("Synthetic Directors 3D");
+            history.Data["customFormatScore"].Should().Be("77");
+            history.EditionRuleRevision.Should().Be(1);
+            history.Languages.Should().Equal(request.Languages);
+            download.EditionOperationId.Should().Be(intent.OperationId);
+            _journal.Get(intent.Id).State.Should().Be(MovieEditionSubmissionState.Recorded);
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void replay_repairs_a_missing_stream_without_replacing_the_other_grab(bool movieHistory)
+        {
+            var intent = _journal.Prepare(Intent());
+            _journal.Accept(intent.OperationId, "synthetic-download");
+            _journal.RecordGrabs(intent.OperationId);
+            var history = Mocker.Resolve<HistoryRepository>();
+            var downloads = Mocker.Resolve<DownloadHistoryRepository>();
+            var originalHistoryId = history.All().Single().Id;
+            var originalDownloadId = downloads.All().Single().Id;
+            if (movieHistory) history.Delete(originalHistoryId);
+            else downloads.Delete(originalDownloadId);
+
+            _journal.RecordGrabs(intent.OperationId);
+
+            history.Count().Should().Be(1);
+            downloads.Count().Should().Be(1);
+            if (movieHistory) downloads.All().Single().Id.Should().Be(originalDownloadId);
+            else history.All().Single().Id.Should().Be(originalHistoryId);
+        }
+
+        [Test]
+        public void failure_in_the_second_stream_rolls_back_both_grabs_and_journal_progress()
+        {
+            var intent = _journal.Prepare(Intent());
+            _journal.Accept(intent.OperationId, "synthetic-download");
+            using (var connection = Db.OpenConnection())
+            {
+                if (Db.DatabaseType == DatabaseType.PostgreSQL)
+                    connection.Execute(@"ALTER TABLE ""DownloadHistory"" ADD CONSTRAINT synthetic_reject_grab CHECK (""EventType"" <> 1)");
+                else
+                    connection.Execute(@"CREATE TRIGGER synthetic_reject_grab BEFORE INSERT ON ""DownloadHistory"" WHEN NEW.""EventType"" = 1 BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END");
+            }
+
+            Action record = () => _journal.RecordGrabs(intent.OperationId);
+            record.Should().Throw<System.Data.Common.DbException>();
+            Mocker.Resolve<HistoryRepository>().Count().Should().Be(0);
+            Mocker.Resolve<DownloadHistoryRepository>().Count().Should().Be(0);
+            _journal.Get(intent.Id).State.Should().Be(MovieEditionSubmissionState.Accepted);
+            using (var connection = Db.OpenConnection())
+            {
+                connection.Execute(Db.DatabaseType == DatabaseType.PostgreSQL ?
+                    @"ALTER TABLE ""DownloadHistory"" DROP CONSTRAINT synthetic_reject_grab" : "DROP TRIGGER synthetic_reject_grab");
+            }
+
+            _journal.RecordGrabs(intent.OperationId).State.Should().Be(MovieEditionSubmissionState.Recorded);
+            Mocker.Resolve<HistoryRepository>().Count().Should().Be(1);
+            Mocker.Resolve<DownloadHistoryRepository>().Count().Should().Be(1);
+        }
+
+        [Test]
+        public void concurrent_replay_keeps_one_grab_in_each_stream()
+        {
+            var intent = _journal.Prepare(Intent());
+            _journal.Accept(intent.OperationId, "synthetic-download");
+            using var start = new ManualResetEventSlim();
+            var tasks = Enumerable.Range(0, 2).Select(_ => Task.Run(() => { start.Wait(); return _journal.RecordGrabs(intent.OperationId); })).ToArray();
+            start.Set();
+            Task.WaitAll(tasks);
+
+            Mocker.Resolve<HistoryRepository>().Count().Should().Be(1);
+            Mocker.Resolve<DownloadHistoryRepository>().Count().Should().Be(1);
+            tasks.Should().OnlyContain(t => t.Result.State == MovieEditionSubmissionState.Recorded);
+        }
+
+        [TestCase("History")]
+        [TestCase("DownloadHistory")]
+        public void replay_rejects_conflicting_grabs_and_preserves_their_evidence(string table)
+        {
+            var intent = _journal.Prepare(Intent());
+            _journal.Accept(intent.OperationId, "synthetic-download");
+            _journal.RecordGrabs(intent.OperationId);
+            using (var connection = Db.OpenConnection())
+                connection.Execute($@"UPDATE ""{table}"" SET ""SourceTitle"" = 'Synthetic.Other.Voyage.2026-SyntheticGroup'");
+
+            Action replay = () => _journal.RecordGrabs(intent.OperationId);
+
+            replay.Should().Throw<InvalidOperationException>().WithMessage("*conflicts*");
+            using (var connection = Db.OpenConnection())
+                connection.ExecuteScalar<string>($@"SELECT ""SourceTitle"" FROM ""{table}""").Should().Be("Synthetic.Other.Voyage.2026-SyntheticGroup");
+        }
+
+        [TestCase("HistoryData")]
+        [TestCase("DownloadHistoryData")]
+        [TestCase("Languages")]
+        public void old_intent_without_complete_payloads_requires_manual_review(string field)
+        {
+            var intent = _journal.Prepare(Intent());
+            _journal.Accept(intent.OperationId, "synthetic-download");
+            using (var connection = Db.OpenConnection())
+                connection.Execute($@"UPDATE ""MovieEditionSubmissions"" SET ""{field}"" = NULL");
+
+            Action replay = () => _journal.RecordGrabs(intent.OperationId);
+
+            replay.Should().Throw<InvalidOperationException>().WithMessage("*payloads*");
+            Mocker.Resolve<HistoryRepository>().Count().Should().Be(0);
+            Mocker.Resolve<DownloadHistoryRepository>().Count().Should().Be(0);
+        }
+
+        [Test]
+        public void torrent_payload_and_hash_survive_atomic_replay()
+        {
+            var request = Intent();
+            request.Release = new TorrentInfo
+            {
+                Title = request.Release.Title, Guid = "synthetic-torrent-release", InfoHash = new string('a', 40),
+                DownloadProtocol = NzbDrone.Core.Indexers.DownloadProtocol.Torrent,
+                MagnetUrl = "magnet:?xt=urn:btih:" + new string('a', 40), PublishDate = DateTime.UtcNow.AddDays(-1)
+            };
+            var intent = _journal.Prepare(request);
+            _journal.Accept(intent.OperationId, "synthetic-torrent-download");
+
+            _journal.RecordGrabs(intent.OperationId);
+            _journal.RecordGrabs(intent.OperationId);
+
+            var download = Mocker.Resolve<DownloadHistoryRepository>().All().Single();
+            download.Release.Should().BeOfType<TorrentInfo>().Which.InfoHash.Should().Be(new string('a', 40));
+            Mocker.Resolve<HistoryRepository>().All().Single().Data["torrentInfoHash"].Should().Be(new string('a', 40));
+        }
+
+        [Test]
+        public void conflicting_release_payload_rolls_back_repair_of_the_other_stream()
+        {
+            var intent = _journal.Prepare(Intent());
+            _journal.Accept(intent.OperationId, "synthetic-download");
+            _journal.RecordGrabs(intent.OperationId);
+            var download = Mocker.Resolve<DownloadHistoryRepository>().All().Single();
+            download.Release.Guid = "synthetic-conflicting-release";
+            using (var connection = Db.OpenConnection())
+                connection.Execute(@"UPDATE ""DownloadHistory"" SET ""Release"" = @Release", new { Release = System.Text.Json.JsonSerializer.Serialize(download.Release) });
+            Mocker.Resolve<HistoryRepository>().Purge();
+
+            Action replay = () => _journal.RecordGrabs(intent.OperationId);
+
+            replay.Should().Throw<InvalidOperationException>().WithMessage("*conflicts*");
+            Mocker.Resolve<HistoryRepository>().Count().Should().Be(0);
+            Mocker.Resolve<DownloadHistoryRepository>().Count().Should().Be(1);
+        }
     }
 }

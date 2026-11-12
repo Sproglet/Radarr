@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Languages;
 using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Download
@@ -26,6 +27,13 @@ namespace NzbDrone.Core.Download
         public string MoviePath { get; set; }
         public int DownloadClientId { get; set; }
         public string DownloadClientName { get; set; }
+        public string DownloadClient { get; set; }
+        public int CustomFormatScore { get; set; }
+        public MovieMatchType MovieMatchType { get; set; }
+        public ReleaseSourceType ReleaseSource { get; set; }
+        public List<Language> Languages { get; set; }
+        public Dictionary<string, string> HistoryData { get; set; }
+        public Dictionary<string, string> DownloadHistoryData { get; set; }
         public ReleaseInfo Release { get; set; }
         public ParsedMovieInfo ParsedMovieInfo { get; set; }
         public string DownloadId { get; set; }

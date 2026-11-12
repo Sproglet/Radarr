@@ -149,10 +149,15 @@ namespace NzbDrone.Core.History
 
         public void Handle(MovieGrabbedEvent message)
         {
+            _historyRepository.Insert(CreateGrabHistory(message));
+        }
+
+        internal static MovieHistory CreateGrabHistory(MovieGrabbedEvent message)
+        {
             var history = new MovieHistory
             {
                 EventType = MovieHistoryEventType.Grabbed,
-                Date = DateTime.UtcNow,
+                Date = message.EditionGrabbedAt ?? DateTime.UtcNow,
                 Quality = message.Movie.ParsedMovieInfo.Quality,
                 Languages = message.Movie.Languages,
                 SourceTitle = message.Movie.Release.Title,
@@ -200,7 +205,7 @@ namespace NzbDrone.Core.History
                 history.Data.Add("TorrentInfoHash", torrentRelease.InfoHash);
             }
 
-            _historyRepository.Insert(history);
+            return history;
         }
 
         public void Handle(MovieFileImportedEvent message)

@@ -209,8 +209,14 @@ namespace NzbDrone.Core.Datastore
             return $"INSERT INTO {_table} ({sbColumnList.ToString()}) VALUES ({sbParameterList.ToString()}); SELECT last_insert_rowid() id";
         }
 
-        protected TModel Insert(IDbConnection connection, IDbTransaction transaction, TModel model)
+        protected internal TModel Insert(IDbConnection connection, IDbTransaction transaction, TModel model)
         {
+            if (model.Id != 0 || (RequiresLifecycleTransaction && transaction == null) ||
+                (transaction != null && transaction.Connection != connection))
+            {
+                throw new InvalidOperationException("Transactional insertion requires a new model and a transaction belonging to its connection.");
+            }
+
             SqlBuilderExtensions.LogQuery(_insertSql, model);
 
             var multi = RetryStrategy.Execute(static (state, _) => state.connection.QueryMultiple(state._insertSql, state.model, state.transaction), (connection, _insertSql, model, transaction));

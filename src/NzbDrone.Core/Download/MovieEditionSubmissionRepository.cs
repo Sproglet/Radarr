@@ -2,12 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Dapper;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download.History;
 using NzbDrone.Core.History;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
 
 namespace NzbDrone.Core.Download
@@ -17,14 +20,20 @@ namespace NzbDrone.Core.Download
         MovieEditionSubmission Prepare(MovieEditionSubmission submission);
         MovieEditionSubmission Accept(string operationId, string downloadId);
         MovieEditionSubmission Record(string operationId);
+        MovieEditionSubmission RecordGrabs(string operationId);
         MovieEditionSubmission Settle(string operationId);
     }
 
     public class MovieEditionSubmissionRepository : BasicRepository<MovieEditionSubmission>, IMovieEditionSubmissionRepository
     {
-        public MovieEditionSubmissionRepository(IMainDatabase database, IEventAggregator eventAggregator)
+        private readonly HistoryRepository _history;
+        private readonly DownloadHistoryRepository _downloads;
+
+        public MovieEditionSubmissionRepository(IMainDatabase database, IEventAggregator eventAggregator, HistoryRepository history, DownloadHistoryRepository downloads)
             : base(database, eventAggregator)
         {
+            _history = history;
+            _downloads = downloads;
         }
 
         protected override bool RequiresLifecycleTransaction => true;
@@ -34,7 +43,39 @@ namespace NzbDrone.Core.Download
             submission.OperationId ??= Guid.NewGuid().ToString("D");
             submission.CreatedAt = DateTime.UtcNow;
             submission.UpdatedAt = submission.CreatedAt;
+            if (!MovieEditionOperationIdentity.IsValid(submission.OperationId) || submission.Release == null || submission.ParsedMovieInfo == null)
+            {
+                throw new InvalidOperationException("Provide valid submission identity, release and parsed evidence before preparation.");
+            }
+
+            submission.DownloadClient ??= submission.DownloadClientName;
+            submission.Languages ??= submission.ParsedMovieInfo.Languages ?? new();
+            var message = CreateGrabEvent(submission);
+            submission.HistoryData = HistoryService.CreateGrabHistory(message).Data;
+            submission.DownloadHistoryData = DownloadHistoryService.CreateGrabHistory(message).Data;
             return Insert(submission);
+        }
+
+        private static MovieGrabbedEvent CreateGrabEvent(MovieEditionSubmission submission)
+        {
+            var edition = new MovieEdition
+            {
+                Id = submission.MovieEditionId, MovieId = submission.MovieId, RuleRevision = submission.EditionRuleRevision,
+                Name = submission.EditionName, Attributes = submission.EditionAttributes, QualityProfileId = submission.QualityProfileId,
+                MovieFileId = submission.MovieFileId
+            };
+            var remote = new RemoteMovie
+            {
+                Movie = new Movie { Id = submission.MovieId }, Release = submission.Release, ParsedMovieInfo = submission.ParsedMovieInfo,
+                Languages = submission.Languages, CustomFormatScore = submission.CustomFormatScore,
+                MovieMatchType = submission.MovieMatchType, ReleaseSource = submission.ReleaseSource,
+                EditionContext = new MovieEditionContext(edition, null, null, true)
+            };
+            return new MovieGrabbedEvent(remote, submission.OperationId, submission.CreatedAt)
+            {
+                DownloadId = submission.DownloadId, DownloadClientId = submission.DownloadClientId,
+                DownloadClient = submission.DownloadClient, DownloadClientName = submission.DownloadClientName
+            };
         }
 
         protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, MovieEditionSubmission submission)
@@ -93,6 +134,53 @@ namespace NzbDrone.Core.Download
 
         public MovieEditionSubmission Record(string operationId) => Transition(operationId, MovieEditionSubmissionState.Recorded);
 
+        public MovieEditionSubmission RecordGrabs(string operationId)
+        {
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            var submission = LockSubmission(connection, transaction, operationId);
+            if (submission.State is not (MovieEditionSubmissionState.Accepted or MovieEditionSubmissionState.Recorded))
+            {
+                throw new InvalidOperationException("Grab persistence requires accepted unresolved submission intent.");
+            }
+
+            if (submission.HistoryData == null || submission.DownloadHistoryData == null || submission.Languages == null || string.IsNullOrWhiteSpace(submission.DownloadId))
+            {
+                throw new InvalidOperationException("Submission lacks complete prepared grab payloads; review it manually.");
+            }
+
+            var message = CreateGrabEvent(submission);
+            var movieGrab = HistoryService.CreateGrabHistory(message);
+            var downloadGrab = DownloadHistoryService.CreateGrabHistory(message);
+            movieGrab.Data = submission.HistoryData;
+            downloadGrab.Data = submission.DownloadHistoryData;
+            var existingMovie = connection.QuerySingleOrDefault<MovieHistory>(@"SELECT * FROM ""History"" WHERE ""EditionOperationId"" = @OperationId AND ""EventType"" = 1", submission, transaction);
+            var existingDownload = connection.QuerySingleOrDefault<DownloadHistory>(@"SELECT * FROM ""DownloadHistory"" WHERE ""EditionOperationId"" = @OperationId AND ""EventType"" = 1", submission, transaction);
+            if (existingMovie == null)
+            {
+                _history.Insert(connection, transaction, movieGrab);
+            }
+            else if (!SameGrab(existingMovie, movieGrab))
+            {
+                throw new InvalidOperationException("Existing movie-history grab conflicts with immutable prepared payload.");
+            }
+
+            if (existingDownload == null)
+            {
+                _downloads.Insert(connection, transaction, downloadGrab);
+            }
+            else if (!SameGrab(existingDownload, downloadGrab))
+            {
+                throw new InvalidOperationException("Existing download-history grab conflicts with immutable prepared payload.");
+            }
+
+            submission.State = MovieEditionSubmissionState.Recorded;
+            submission.UpdatedAt = DateTime.UtcNow;
+            connection.Execute(@"UPDATE ""MovieEditionSubmissions"" SET ""State"" = @State, ""UpdatedAt"" = @UpdatedAt WHERE ""Id"" = @Id", submission, transaction);
+            transaction.Commit();
+            return submission;
+        }
+
         public MovieEditionSubmission Settle(string operationId) => Transition(operationId, MovieEditionSubmissionState.Settled);
 
         private MovieEditionSubmission Transition(string operationId, MovieEditionSubmissionState next, string downloadId = null)
@@ -100,19 +188,7 @@ namespace NzbDrone.Core.Download
             using var connection = _database.OpenConnection();
             using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
 
-            // Lock the journal row first; prepared intent already prevents target removal.
-            var found = connection.Execute(@"UPDATE ""MovieEditionSubmissions"" SET ""State"" = ""State"" WHERE ""OperationId"" = @OperationId", new { OperationId = operationId }, transaction);
-            if (found != 1)
-            {
-                throw new InvalidOperationException("Unknown submission operation.");
-            }
-
-            var submission = connection.QuerySingle<MovieEditionSubmission>(@"SELECT * FROM ""MovieEditionSubmissions"" WHERE ""OperationId"" = @OperationId", new { OperationId = operationId }, transaction);
-            if (!Enum.IsDefined(submission.State) || !MovieEditionOperationIdentity.IsValid(submission.OperationId))
-            {
-                throw new InvalidOperationException("Invalid persisted submission state requires review.");
-            }
-
+            var submission = LockSubmission(connection, transaction, operationId);
             if (submission.State >= next)
             {
                 if (downloadId != null && downloadId != submission.DownloadId)
@@ -151,6 +227,53 @@ namespace NzbDrone.Core.Download
             connection.Execute(@"UPDATE ""MovieEditionSubmissions"" SET ""State"" = @State, ""DownloadId"" = @DownloadId, ""UpdatedAt"" = @UpdatedAt WHERE ""Id"" = @Id", submission, transaction);
             transaction.Commit();
             return submission;
+        }
+
+        private static MovieEditionSubmission LockSubmission(IDbConnection connection, IDbTransaction transaction, string operationId)
+        {
+            // Lock the journal row first; prepared intent already prevents target removal.
+            var found = connection.Execute(@"UPDATE ""MovieEditionSubmissions"" SET ""State"" = ""State"" WHERE ""OperationId"" = @OperationId", new { OperationId = operationId }, transaction);
+            if (found != 1)
+            {
+                throw new InvalidOperationException("Unknown submission operation.");
+            }
+
+            var submission = connection.QuerySingle<MovieEditionSubmission>(@"SELECT * FROM ""MovieEditionSubmissions"" WHERE ""OperationId"" = @OperationId", new { OperationId = operationId }, transaction);
+            if (!Enum.IsDefined(submission.State) || !MovieEditionOperationIdentity.IsValid(submission.OperationId))
+            {
+                throw new InvalidOperationException("Invalid persisted submission state requires review.");
+            }
+
+            return submission;
+        }
+
+        private static bool SameData(Dictionary<string, string> left, Dictionary<string, string> right) => left != null && right != null &&
+            left.Count == right.Count && left.All(pair => right.TryGetValue(pair.Key, out var value) && value == pair.Value);
+
+        private static bool SameGrab(MovieHistory stored, MovieHistory expected) => stored.MovieId == expected.MovieId &&
+            stored.MovieEditionId == expected.MovieEditionId && stored.EditionRuleRevision == expected.EditionRuleRevision &&
+            stored.EditionOperationId == expected.EditionOperationId && stored.DownloadId == expected.DownloadId && stored.SourceTitle == expected.SourceTitle &&
+            MovieEditionGrabGuard.TimestampMicroseconds(stored.Date) == MovieEditionGrabGuard.TimestampMicroseconds(expected.Date) &&
+            Equals(stored.Quality, expected.Quality) && (stored.Languages ?? new()).SequenceEqual(expected.Languages ?? new()) && SameData(stored.Data, expected.Data);
+
+        private static bool SameGrab(DownloadHistory stored, DownloadHistory expected) => stored.MovieId == expected.MovieId &&
+            stored.MovieEditionId == expected.MovieEditionId && stored.EditionRuleRevision == expected.EditionRuleRevision &&
+            stored.EditionOperationId == expected.EditionOperationId && stored.DownloadId == expected.DownloadId && stored.SourceTitle == expected.SourceTitle &&
+            MovieEditionGrabGuard.TimestampMicroseconds(stored.Date) == MovieEditionGrabGuard.TimestampMicroseconds(expected.Date) &&
+            stored.DownloadClientId == expected.DownloadClientId && stored.Protocol == expected.Protocol && stored.IndexerId == expected.IndexerId &&
+            SameRelease(stored.Release, expected.Release) && SameData(stored.Data, expected.Data);
+
+        private static bool SameRelease(ReleaseInfo stored, ReleaseInfo expected)
+        {
+            var left = JsonSerializer.SerializeToNode((object)stored)?.AsObject();
+            var right = JsonSerializer.SerializeToNode((object)expected)?.AsObject();
+            foreach (var name in new[] { nameof(ReleaseInfo.Age), nameof(ReleaseInfo.AgeHours), nameof(ReleaseInfo.AgeMinutes) })
+            {
+                left?.Remove(name);
+                right?.Remove(name);
+            }
+
+            return JsonNode.DeepEquals(left, right);
         }
 
         private static void RequireGrab(IDbConnection connection, IDbTransaction transaction, string table, MovieEditionSubmission submission, bool movieHistory)
