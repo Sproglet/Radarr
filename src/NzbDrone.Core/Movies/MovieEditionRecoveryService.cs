@@ -77,6 +77,13 @@ namespace NzbDrone.Core.Movies
                 throw new InvalidOperationException("Recovery grab records belong to different downloads.");
             }
 
+            if (!MovieEditionOperationIdentity.IsValid(grab?.EditionOperationId) ||
+                !MovieEditionOperationIdentity.IsValid(downloadGrab?.EditionOperationId) ||
+                (grab != null && downloadGrab != null && grab.EditionOperationId != downloadGrab.EditionOperationId))
+            {
+                throw new InvalidOperationException("Recovery grab records disagree about the submission operation identity. Review the download manually.");
+            }
+
             if (grab?.MovieEditionId != null && downloadGrab?.MovieEditionId != null &&
                 (grab.MovieEditionId != downloadGrab.MovieEditionId || grab.EditionRuleRevision != downloadGrab.EditionRuleRevision))
             {

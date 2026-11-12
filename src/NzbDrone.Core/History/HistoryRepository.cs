@@ -40,20 +40,21 @@ namespace NzbDrone.Core.History
         {
             if (history.EventType == MovieHistoryEventType.Grabbed)
             {
-                MovieEditionGrabGuard.LockAndValidate(connection, transaction, history.MovieId, history.MovieEditionId);
+                MovieEditionGrabGuard.LockAndValidate(connection, transaction, history.MovieId, history.MovieEditionId, history.EditionOperationId);
             }
         }
 
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, MovieHistory history, List<string> properties)
         {
             var stored = connection.QuerySingle<MovieHistory>(@"SELECT * FROM ""History"" WHERE ""Id"" = @Id", history, transaction);
-            if (stored.EventType == MovieHistoryEventType.Grabbed && stored.MovieEditionId.HasValue)
+            if (stored.MovieEditionId.HasValue && (stored.EventType == MovieHistoryEventType.Grabbed || stored.EditionOperationId != null))
             {
                 MovieEditionGrabGuard.ValidateSnapshot(
                     properties,
                     (nameof(MovieHistory.MovieId), stored.MovieId, history.MovieId),
                     (nameof(MovieHistory.MovieEditionId), stored.MovieEditionId, history.MovieEditionId),
                     (nameof(MovieHistory.EditionRuleRevision), stored.EditionRuleRevision, history.EditionRuleRevision),
+                    (nameof(MovieHistory.EditionOperationId), stored.EditionOperationId, history.EditionOperationId),
                     (nameof(MovieHistory.DownloadId), stored.DownloadId, history.DownloadId),
                     (nameof(MovieHistory.SourceTitle), stored.SourceTitle, history.SourceTitle),
                     (nameof(MovieHistory.Date), MovieEditionGrabGuard.TimestampMicroseconds(stored.Date), MovieEditionGrabGuard.TimestampMicroseconds(history.Date)),
@@ -68,7 +69,8 @@ namespace NzbDrone.Core.History
             {
                 var movieId = properties.Contains(nameof(MovieHistory.MovieId)) ? history.MovieId : stored.MovieId;
                 var editionId = properties.Contains(nameof(MovieHistory.MovieEditionId)) ? history.MovieEditionId : stored.MovieEditionId;
-                MovieEditionGrabGuard.LockAndValidate(connection, transaction, movieId, editionId);
+                var operationId = properties.Contains(nameof(MovieHistory.EditionOperationId)) ? history.EditionOperationId : stored.EditionOperationId;
+                MovieEditionGrabGuard.LockAndValidate(connection, transaction, movieId, editionId, operationId);
             }
         }
 

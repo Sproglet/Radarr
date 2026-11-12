@@ -532,15 +532,46 @@ namespace NzbDrone.Core.Test.MovieTests
         }
 
         [Test]
+        public void reused_client_download_id_requires_review_for_distinct_submission_operations(
+            [Values(false, true)] bool historyOnly,
+            [Values(false, true)] bool completed)
+        {
+            Grab(_directors, "synthetic-reused");
+            Grab(_directors, "synthetic-reused");
+            var downloads = Mocker.Resolve<DownloadHistoryRepository>();
+            var grabs = downloads.FindByDownloadId(9, "synthetic-reused");
+            grabs.Select(g => g.EditionOperationId).Distinct().Should().HaveCount(2);
+            if (completed)
+            {
+                var latest = grabs.First();
+                latest.Id = 0;
+                latest.EventType = DownloadHistoryEventType.DownloadImported;
+                latest.Date = DateTime.UtcNow.AddSeconds(1);
+                downloads.Insert(latest);
+            }
+
+            if (historyOnly)
+            {
+                downloads.DeleteMany(downloads.FindByDownloadId(9, "synthetic-reused").Where(h => h.EventType == DownloadHistoryEventType.DownloadGrabbed).Select(h => h.Id));
+            }
+
+            var tracked = Track(ColdService(), "synthetic-reused");
+
+            tracked.State.Should().Be(TrackedDownloadState.ImportBlocked);
+            tracked.EditionRecoveryError.Should().Contain("submission operations");
+            tracked.RemoteMovie?.EditionContext.Should().BeNull();
+        }
+
+        [Test]
         public void mismatched_or_unassigned_terminal_record_cannot_settle_a_typed_grab(
             [Values(DownloadHistoryEventType.DownloadImported, DownloadHistoryEventType.DownloadFailed, DownloadHistoryEventType.DownloadIgnored)] DownloadHistoryEventType eventType,
-            [Values("movie", "target", "unassigned", "revision", "unknown-revision")] string mismatch)
+            [Values("movie", "target", "unassigned", "revision", "unknown-revision", "operation", "unknown-operation")] string mismatch)
         {
             Grab(_directors, "synthetic-shared");
             var grab = _downloads.GetLatestGrab(9, "synthetic-shared");
             var terminal = new DownloadHistory
             {
-                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision,
+                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision, EditionOperationId = grab.EditionOperationId,
                 SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 9, DownloadId = grab.DownloadId, Date = grab.Date.AddMinutes(1), EventType = eventType
             };
             if (mismatch == "movie") terminal.MovieId += 999;
@@ -548,6 +579,8 @@ namespace NzbDrone.Core.Test.MovieTests
             if (mismatch == "unassigned") terminal.MovieEditionId = null;
             if (mismatch == "revision") terminal.EditionRuleRevision++;
             if (mismatch == "unknown-revision") terminal.EditionRuleRevision = null;
+            if (mismatch == "operation") terminal.EditionOperationId = Guid.NewGuid().ToString("D");
+            if (mismatch == "unknown-operation") terminal.EditionOperationId = null;
             Mocker.Resolve<DownloadHistoryRepository>().Insert(terminal);
 
             var tracked = Track(ColdService(), "synthetic-shared");
@@ -570,7 +603,7 @@ namespace NzbDrone.Core.Test.MovieTests
             _editions.Update(_directors);
             Mocker.Resolve<DownloadHistoryRepository>().Insert(new DownloadHistory
             {
-                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision,
+                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision, EditionOperationId = grab.EditionOperationId,
                 SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 9, DownloadId = grab.DownloadId, Date = grab.Date.AddMinutes(1), EventType = eventType
             });
 
@@ -586,7 +619,7 @@ namespace NzbDrone.Core.Test.MovieTests
         [Test]
         public void history_only_typed_intent_requires_matching_terminal_identity(
             [Values(DownloadHistoryEventType.DownloadImported, DownloadHistoryEventType.DownloadFailed, DownloadHistoryEventType.DownloadIgnored)] DownloadHistoryEventType eventType,
-            [Values("movie", "target", "unassigned", "revision", "unknown-revision", "matching")] string evidence)
+            [Values("movie", "target", "unassigned", "revision", "unknown-revision", "operation", "unknown-operation", "matching")] string evidence)
         {
             Grab(_directors, "synthetic-shared");
             var grab = _downloads.GetLatestGrab(9, "synthetic-shared");
@@ -595,7 +628,7 @@ namespace NzbDrone.Core.Test.MovieTests
             _editions.Update(_directors);
             var terminal = new DownloadHistory
             {
-                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision,
+                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision, EditionOperationId = grab.EditionOperationId,
                 SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 9, DownloadId = grab.DownloadId,
                 Date = grab.Date.AddMinutes(1), EventType = eventType
             };
@@ -604,6 +637,8 @@ namespace NzbDrone.Core.Test.MovieTests
             if (evidence == "unassigned") terminal.MovieEditionId = null;
             if (evidence == "revision") terminal.EditionRuleRevision++;
             if (evidence == "unknown-revision") terminal.EditionRuleRevision = null;
+            if (evidence == "operation") terminal.EditionOperationId = Guid.NewGuid().ToString("D");
+            if (evidence == "unknown-operation") terminal.EditionOperationId = null;
             Mocker.Resolve<DownloadHistoryRepository>().Insert(terminal);
 
             var tracked = Track(ColdService(), "synthetic-shared");
@@ -639,7 +674,7 @@ namespace NzbDrone.Core.Test.MovieTests
             }
             Mocker.Resolve<DownloadHistoryRepository>().Insert(new DownloadHistory
             {
-                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision,
+                MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision, EditionOperationId = grab.EditionOperationId,
                 SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadClientId = 9, DownloadId = grab.DownloadId,
                 Date = grab.Date.AddMinutes(1), EventType = eventType
             });

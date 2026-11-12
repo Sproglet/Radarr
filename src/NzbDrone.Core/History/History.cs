@@ -25,6 +25,7 @@ namespace NzbDrone.Core.History
         public int MovieId { get; set; }
         public int? MovieEditionId { get; set; }
         public int? EditionRuleRevision { get; set; }
+        public string EditionOperationId { get; set; }
         public string SourceTitle { get; set; }
         public QualityModel Quality { get; set; }
         public DateTime Date { get; set; }

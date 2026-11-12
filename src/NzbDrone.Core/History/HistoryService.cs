@@ -159,6 +159,7 @@ namespace NzbDrone.Core.History
                 DownloadId = message.DownloadId,
                 MovieId = message.Movie.Movie.Id,
                 MovieEditionId = message.Movie.EditionContext?.Edition.Id,
+                EditionOperationId = message.EditionOperationId,
                 EditionRuleRevision = message.Movie.EditionEvaluation?.Classification?.RuleRevision ?? message.Movie.EditionContext?.Edition.RuleRevision
             };
 

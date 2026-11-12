@@ -57,6 +57,7 @@ namespace NzbDrone.Core.Test.HistoryTests
                 .With(c => c.Languages = new List<Language> { Language.English })
                 .With(c => c.MovieId = 12)
                 .With(c => c.MovieEditionId = null)
+                .With(c => c.EditionOperationId = null)
                 .With(c => c.EventType = MovieHistoryEventType.Grabbed)
                 .BuildNew();
 
@@ -65,6 +66,7 @@ namespace NzbDrone.Core.Test.HistoryTests
                 .With(c => c.Languages = new List<Language> { Language.English })
                 .With(c => c.MovieId = 12)
                 .With(c => c.MovieEditionId = null)
+                .With(c => c.EditionOperationId = null)
                 .With(c => c.EventType = MovieHistoryEventType.Grabbed)
              .BuildNew();
 

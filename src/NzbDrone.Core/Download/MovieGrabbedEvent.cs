@@ -1,3 +1,4 @@
+using System;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Parser.Model;
 
@@ -10,10 +11,12 @@ namespace NzbDrone.Core.Download
         public string DownloadClient { get; set; }
         public string DownloadClientName { get; set; }
         public string DownloadId { get; set; }
+        public string EditionOperationId { get; }
 
         public MovieGrabbedEvent(RemoteMovie movie)
         {
             Movie = movie;
+            EditionOperationId = movie.EditionContext == null ? null : Guid.NewGuid().ToString("D");
         }
     }
 }

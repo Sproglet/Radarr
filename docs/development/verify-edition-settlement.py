@@ -1,6 +1,6 @@
 """Validate terminal identity using disposable databases, HTTP clients and media.
 
-Run in the externally offline SDK runner, with optional --postgres/--history-only. All malformed
+Run in the externally offline SDK runner, with optional --postgres/--history-only/--operation-id. All malformed
 records are offline synthetic fixtures; this never opens a production database.
 """
 
@@ -30,7 +30,7 @@ def blocked(media, other_id):
     assert p.snapshot() == media
 
 
-def run(postgres, history_only=False):
+def run(postgres, history_only=False, operation_identity=False):
     if postgres:
         p.DATABASE.enable_postgres()
     p.run()
@@ -40,6 +40,13 @@ def run(postgres, history_only=False):
     clients = [c.SyntheticSab(1), c.SyntheticSab(2)]
     c.SERVERS.extend(clients)
     c.seed(clients, secondary)
+    if operation_identity:
+        with p.database() as db:
+            for table in ("History", "DownloadHistory"):
+                for row in p.rows(table):
+                    if row["EventType"] == 1:
+                        operation = "00000000-0000-4000-8000-0000000000" + ("41" if row["MovieEditionId"] == 1 else "42")
+                        db.execute('UPDATE "' + table + '" SET "EditionOperationId"=? WHERE "Id"=?', (operation, row["Id"]))
     grabs = [r for r in p.rows("DownloadHistory") if r["EventType"] == 1]
     first = next(r for r in grabs if r["DownloadClientId"] == 41)
     with p.database() as db:
@@ -57,9 +64,12 @@ def run(postgres, history_only=False):
             VALUES (1,NULL,NULL,?,?,2,?,1,77,41,?,?)''',
             (first["SourceTitle"], first["Date"], c.SHARED, json.dumps(json.loads(first["Release"])) if isinstance(first["Release"], str) else json.dumps(first["Release"]), '{}'))
     terminal = next(r for r in p.rows("DownloadHistory") if r["EventType"] == 2)
-    for movie, edition, revision, label in [(1, None, None, "unassigned"), (1, 1, 2, "wrong revision"), (999999, 1, 1, "foreign movie")]:
+    cases = [(1, None, None, first["EditionOperationId"], "unassigned"), (1, 1, 2, first["EditionOperationId"], "wrong revision"), (999999, 1, 1, first["EditionOperationId"], "foreign movie")]
+    if operation_identity:
+        cases.extend([(1, 1, 1, "00000000-0000-4000-8000-000000000099", "wrong operation"), (1, 1, 1, None, "missing operation")])
+    for movie, edition, revision, operation, label in cases:
         with p.database() as db:
-            db.execute('UPDATE "DownloadHistory" SET "MovieId"=?,"MovieEditionId"=?,"EditionRuleRevision"=? WHERE "Id"=?', (movie, edition, revision, terminal["Id"]))
+            db.execute('UPDATE "DownloadHistory" SET "MovieId"=?,"MovieEditionId"=?,"EditionRuleRevision"=?,"EditionOperationId"=? WHERE "Id"=?', (movie, edition, revision, operation, terminal["Id"]))
         p.start()
         blocked(media, other_id)
         p.stop()
@@ -70,7 +80,7 @@ def run(postgres, history_only=False):
         p.stop()
         print("PASS: " + label + " completion remains blocked across restart, retains saved grabs and leaves the other client/edition and media intact", flush=True)
     with p.database() as db:
-        db.execute('UPDATE "DownloadHistory" SET "MovieId"=1,"MovieEditionId"=1,"EditionRuleRevision"=1 WHERE "Id"=?', (terminal["Id"],))
+        db.execute('UPDATE "DownloadHistory" SET "MovieId"=1,"MovieEditionId"=1,"EditionRuleRevision"=1,"EditionOperationId"=? WHERE "Id"=?', (first["EditionOperationId"], terminal["Id"]))
     p.start()
     remaining = c.queue([2])
     assert remaining[2]["id"] == other_id and p.snapshot() == media
@@ -84,9 +94,9 @@ def run(postgres, history_only=False):
 
 if __name__ == "__main__":
     try:
-        if any(arg not in {"--postgres", "--history-only"} for arg in sys.argv[1:]) or len(set(sys.argv[1:])) != len(sys.argv[1:]):
-            raise ValueError("Only --postgres and --history-only are supported")
-        run("--postgres" in sys.argv[1:], "--history-only" in sys.argv[1:])
+        if any(arg not in {"--postgres", "--history-only", "--operation-id"} for arg in sys.argv[1:]) or len(set(sys.argv[1:])) != len(sys.argv[1:]):
+            raise ValueError("Only --postgres, --history-only and --operation-id are supported")
+        run("--postgres" in sys.argv[1:], "--history-only" in sys.argv[1:], "--operation-id" in sys.argv[1:])
     finally:
         p.stop()
         try:

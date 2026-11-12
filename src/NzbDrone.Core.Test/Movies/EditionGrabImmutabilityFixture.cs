@@ -32,6 +32,7 @@ namespace NzbDrone.Core.Test.MovieTests
         private MovieHistory MovieGrab() => new()
         {
             MovieId = _movie.Id, MovieEditionId = _edition.Id, EditionRuleRevision = 1,
+            EditionOperationId = Guid.NewGuid().ToString("D"),
             DownloadId = "synthetic-download", SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup",
             Date = DateTime.UtcNow, EventType = MovieHistoryEventType.Grabbed,
             Quality = new(), Languages = new(),
@@ -41,6 +42,7 @@ namespace NzbDrone.Core.Test.MovieTests
         private DownloadHistory DownloadGrab() => new()
         {
             MovieId = _movie.Id, MovieEditionId = _edition.Id, EditionRuleRevision = 1,
+            EditionOperationId = Guid.NewGuid().ToString("D"),
             DownloadId = "synthetic-download", SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup",
             Date = DateTime.UtcNow, EventType = DownloadHistoryEventType.DownloadGrabbed, DownloadClientId = 41,
             Data = new() { { "movieEditionName", _edition.Name } }
@@ -82,7 +84,7 @@ namespace NzbDrone.Core.Test.MovieTests
                 return "Data";
             }
 
-            var field = change == "unassigned" ? "MovieEditionId" : change == "unknown-revision" ? "EditionRuleRevision" : change;
+            var field = change switch { "unassigned" => "MovieEditionId", "unknown-revision" => "EditionRuleRevision", "unknown-operation" => "EditionOperationId", _ => change };
             var property = type.GetProperty(field);
             var value = property.GetValue(record);
             property.SetValue(record, change switch
@@ -90,11 +92,12 @@ namespace NzbDrone.Core.Test.MovieTests
                 "MovieId" => (int)value + 999,
                 "MovieEditionId" => (int)value + 999,
                 "EditionRuleRevision" => (int)value + 1,
+                "EditionOperationId" => Guid.NewGuid().ToString("D"),
                 "DownloadId" => "synthetic-other-download",
                 "SourceTitle" => "Synthetic.Other.Voyage.2026-SyntheticGroup",
                 "Date" => ((DateTime)value).AddSeconds(-1),
                 "EventType" => Enum.ToObject(property.PropertyType, 4),
-                "unassigned" or "unknown-revision" => null,
+                "unassigned" or "unknown-revision" or "unknown-operation" => null,
                 _ => throw new ArgumentException(change)
             });
             return field;
@@ -116,7 +119,7 @@ namespace NzbDrone.Core.Test.MovieTests
         [Test]
         public void typed_grab_identity_is_immutable_through_every_repository_writer(
             [Values(false, true)] bool downloadHistory,
-            [Values("MovieId", "MovieEditionId", "unassigned", "EditionRuleRevision", "unknown-revision", "DownloadId", "SourceTitle", "Date", "EventType", "client", "name")] string change,
+            [Values("MovieId", "MovieEditionId", "unassigned", "EditionRuleRevision", "unknown-revision", "EditionOperationId", "unknown-operation", "DownloadId", "SourceTitle", "Date", "EventType", "client", "name")] string change,
             [Values("update", "bulk", "partial", "bulk-partial")] string writer)
         {
             if (downloadHistory)
@@ -140,6 +143,26 @@ namespace NzbDrone.Core.Test.MovieTests
 
             var stored = (Dictionary<string, string>)typeof(T).GetProperty("Data").GetValue(repository.Get(record.Id));
             stored["syntheticNote"].Should().Be("Synthetic enrichment");
+        }
+
+        [Test]
+        public void operation_linked_terminal_event_identity_is_immutable(
+            [Values(false, true)] bool downloadHistory,
+            [Values(2, 3, 4)] int terminal,
+            [Values("update", "bulk", "partial", "bulk-partial")] string writer)
+        {
+            if (downloadHistory)
+            {
+                var record = DownloadGrab();
+                record.EventType = (DownloadHistoryEventType)terminal;
+                RejectMutation(Mocker.Resolve<DownloadHistoryRepository>(), record, "EditionOperationId", writer);
+            }
+            else
+            {
+                var record = MovieGrab();
+                record.EventType = terminal == 2 ? MovieHistoryEventType.DownloadFolderImported : terminal == 3 ? MovieHistoryEventType.DownloadFailed : MovieHistoryEventType.DownloadIgnored;
+                RejectMutation(Mocker.Resolve<HistoryRepository>(), record, "EditionOperationId", writer);
+            }
         }
 
         [Test]
@@ -203,6 +226,7 @@ namespace NzbDrone.Core.Test.MovieTests
         {
             var target = typeof(T).GetProperty("MovieEditionId");
             target.SetValue(record, null);
+            typeof(T).GetProperty("EditionOperationId").SetValue(record, null);
             repository.Insert(record);
             target.SetValue(record, int.MaxValue);
 

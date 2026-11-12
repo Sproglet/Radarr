@@ -5,6 +5,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Movies;
 using NzbDrone.Core.Movies.Events;
 using NzbDrone.Core.Parser.Model;
 
@@ -75,8 +76,7 @@ namespace NzbDrone.Core.Download.History
 
         public DownloadHistory GetLatestGrab(string downloadId)
         {
-            return GetEvents(downloadId)
-                              .FirstOrDefault(d => d.EventType == DownloadHistoryEventType.DownloadGrabbed);
+            return LatestUnambiguousGrab(GetEvents(downloadId));
         }
 
         private List<DownloadHistory> GetEvents(string downloadId)
@@ -92,7 +92,18 @@ namespace NzbDrone.Core.Download.History
 
         public DownloadHistory GetLatestGrab(int clientId, string downloadId)
         {
-            return _repository.FindByDownloadId(clientId, downloadId).FirstOrDefault(h => h.EventType == DownloadHistoryEventType.DownloadGrabbed);
+            return LatestUnambiguousGrab(_repository.FindByDownloadId(clientId, downloadId));
+        }
+
+        private static DownloadHistory LatestUnambiguousGrab(List<DownloadHistory> events)
+        {
+            var grabs = events.Where(h => h.EventType == DownloadHistoryEventType.DownloadGrabbed).ToList();
+            if (MovieEditionOperationIdentity.HasAmbiguousOperations(grabs.Select(h => h.EditionOperationId)))
+            {
+                throw new InvalidOperationException("Download history has multiple or invalid edition submission operations. Review the download manually.");
+            }
+
+            return grabs.FirstOrDefault();
         }
 
         public DownloadHistory GetLatestDownloadHistoryItem(int clientId, string downloadId)
@@ -109,6 +120,11 @@ namespace NzbDrone.Core.Download.History
 
         private static bool IsImported(List<DownloadHistory> events)
         {
+            if (MovieEditionOperationIdentity.HasAmbiguousOperations(events.Where(h => h.EventType == DownloadHistoryEventType.DownloadGrabbed).Select(h => h.EditionOperationId)))
+            {
+                return false;
+            }
+
             // A newer grab restarts this download. A typed older grab can only be
             // settled by a completion retaining its saved assignment and revision.
             var latest = events.FirstOrDefault(h => h.EventType is
@@ -120,7 +136,8 @@ namespace NzbDrone.Core.Download.History
 
             var grab = events.FirstOrDefault(h => h.EventType == DownloadHistoryEventType.DownloadGrabbed);
             return grab?.MovieEditionId == null || (latest.MovieId == grab.MovieId &&
-                latest.MovieEditionId == grab.MovieEditionId && latest.EditionRuleRevision == grab.EditionRuleRevision);
+                latest.MovieEditionId == grab.MovieEditionId && latest.EditionRuleRevision == grab.EditionRuleRevision &&
+                latest.EditionOperationId == grab.EditionOperationId);
         }
 
         public void Handle(MovieGrabbedEvent message)
@@ -136,6 +153,7 @@ namespace NzbDrone.Core.Download.History
                 EventType = DownloadHistoryEventType.DownloadGrabbed,
                 MovieId = message.Movie.Movie.Id,
                 MovieEditionId = message.Movie.EditionContext?.Edition.Id,
+                EditionOperationId = message.EditionOperationId,
                 EditionRuleRevision = message.Movie.EditionEvaluation?.Classification?.RuleRevision ?? message.Movie.EditionContext?.Edition.RuleRevision,
                 DownloadId = message.DownloadId,
                 SourceTitle = message.Movie.Release.Title,
@@ -202,11 +220,43 @@ namespace NzbDrone.Core.Download.History
         private void CopyGrabIdentity(DownloadHistory history, RemoteMovie remoteMovie)
         {
             var grab = history.DownloadId.IsNullOrWhiteSpace() ? null : GetLatestGrab(history.DownloadClientId, history.DownloadId);
+            var movieGrabs = history.DownloadId.IsNullOrWhiteSpace() ? new List<MovieHistory>() :
+                (_historyService.FindByDownloadId(history.DownloadClientId, history.DownloadId) ?? new List<MovieHistory>())
+                    .Where(h => h.EventType == MovieHistoryEventType.Grabbed).OrderByDescending(h => h.Date).ThenByDescending(h => h.Id).ToList();
+            if (MovieEditionOperationIdentity.HasAmbiguousOperations(movieGrabs.Select(h => h.EditionOperationId)))
+            {
+                throw new InvalidOperationException("Movie history has multiple or invalid edition submission operations. Review the download manually.");
+            }
+
+            var movieGrab = movieGrabs.FirstOrDefault();
+            if (movieGrab?.MovieEditionId != null && (movieGrab.MovieId != history.MovieId ||
+                (grab != null && (grab.MovieEditionId != movieGrab.MovieEditionId || grab.EditionRuleRevision != movieGrab.EditionRuleRevision ||
+                    grab.EditionOperationId != movieGrab.EditionOperationId))))
+            {
+                throw new InvalidOperationException("Grab records disagree about the saved edition submission identity. Review the download manually.");
+            }
+
             if (grab != null && grab.MovieId == history.MovieId && grab.DownloadClientId == history.DownloadClientId)
             {
                 history.MovieEditionId = grab.MovieEditionId;
                 history.EditionRuleRevision = grab.EditionRuleRevision;
+                history.EditionOperationId = grab.EditionOperationId;
                 if (grab.Data != null && grab.Data.TryGetValue("movieEditionName", out var name))
+                {
+                    history.Data["movieEditionName"] = name;
+                }
+            }
+            else if (movieGrab?.MovieEditionId != null)
+            {
+                if (!int.TryParse(movieGrab.Data?.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID), out var clientId) || clientId != history.DownloadClientId)
+                {
+                    throw new InvalidOperationException("Movie-history-only settlement requires positive download-client provenance.");
+                }
+
+                history.MovieEditionId = movieGrab.MovieEditionId;
+                history.EditionRuleRevision = movieGrab.EditionRuleRevision;
+                history.EditionOperationId = movieGrab.EditionOperationId;
+                if (movieGrab.Data.TryGetValue("movieEditionName", out var name))
                 {
                     history.Data["movieEditionName"] = name;
                 }

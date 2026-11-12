@@ -104,6 +104,8 @@ namespace NzbDrone.Core.Movies
                         AND d.""MovieId"" = h.""MovieId"" AND d.""MovieEditionId"" = h.""MovieEditionId""
                         AND (d.""EditionRuleRevision"" = h.""EditionRuleRevision""
                           OR (d.""EditionRuleRevision"" IS NULL AND h.""EditionRuleRevision"" IS NULL))
+                        AND (d.""EditionOperationId"" = h.""EditionOperationId""
+                          OR (d.""EditionOperationId"" IS NULL AND h.""EditionOperationId"" IS NULL))
                         AND d.""EventType"" IN (2, 3, 4)
                         AND (d.""Date"" > h.""Date"" OR (d.""Date"" = h.""Date"" AND d.""Id"" > h.""Id"")))",
                 transaction: transaction);
@@ -113,20 +115,32 @@ namespace NzbDrone.Core.Movies
                     AND EXISTS (SELECT 1 FROM ""Movies"" m WHERE m.""Id"" = h.""MovieId"")
                     AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = h.""MovieEditionId"")",
                 transaction: transaction);
+            var downloadOperations = connection.Query<string>(
+                @"SELECT h.""EditionOperationId"" FROM ""DownloadHistory"" h
+                  WHERE h.""MovieEditionId"" IS NOT NULL AND h.""EventType"" = 1 AND h.""EditionOperationId"" IS NOT NULL
+                    AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = h.""MovieEditionId"")",
+                transaction: transaction);
+            if (downloadOperations.Any(id => !MovieEditionOperationIdentity.IsValid(id)))
+            {
+                references++;
+            }
+
             foreach (var grab in movieGrabs)
             {
                 // Separate history streams have no shared ordering ID. Equal timestamps
                 // cannot prove that a terminal event follows a movie-history-only grab.
                 var client = grab.Data?.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID);
-                if (!int.TryParse(client, out var clientId) || clientId <= 0 ||
+                if (!MovieEditionOperationIdentity.IsValid(grab.EditionOperationId) || !int.TryParse(client, out var clientId) || clientId <= 0 ||
                     string.IsNullOrWhiteSpace(grab.DownloadId) || connection.ExecuteScalar<int>(
                         @"SELECT COUNT(*) FROM ""DownloadHistory"" d
                           WHERE d.""MovieId"" = @MovieId AND d.""MovieEditionId"" = @MovieEditionId
                             AND d.""DownloadClientId"" = @ClientId AND d.""DownloadId"" = @DownloadId
                             AND (d.""EditionRuleRevision"" = @EditionRuleRevision
                               OR (d.""EditionRuleRevision"" IS NULL AND @EditionRuleRevision IS NULL))
+                            AND (d.""EditionOperationId"" = @EditionOperationId
+                              OR (d.""EditionOperationId"" IS NULL AND @EditionOperationId IS NULL))
                             AND d.""EventType"" IN (2,3,4) AND d.""Date"" > @Date",
-                        new { grab.MovieId, grab.MovieEditionId, ClientId = clientId, grab.DownloadId, grab.EditionRuleRevision, grab.Date },
+                        new { grab.MovieId, grab.MovieEditionId, ClientId = clientId, grab.DownloadId, grab.EditionRuleRevision, grab.EditionOperationId, grab.Date },
                         transaction) == 0)
                 {
                     references++;

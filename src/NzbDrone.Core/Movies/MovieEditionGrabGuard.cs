@@ -21,8 +21,13 @@ namespace NzbDrone.Core.Movies
             }
         }
 
-        public static void LockAndValidate(IDbConnection connection, IDbTransaction transaction, int movieId, int? editionId)
+        public static void LockAndValidate(IDbConnection connection, IDbTransaction transaction, int movieId, int? editionId, string operationId = null)
         {
+            if (!MovieEditionOperationIdentity.IsValid(operationId) || (operationId != null && !editionId.HasValue))
+            {
+                throw new InvalidOperationException("Edition grab operation identity must be a canonical nonempty GUID with an assigned edition.");
+            }
+
             if (!editionId.HasValue)
             {
                 return;

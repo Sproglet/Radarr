@@ -158,8 +158,26 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
                 var historyItems = _historyService.FindByDownloadId(downloadClient.Id, downloadItem.DownloadId).OrderByDescending(h => h.Date).ToList();
                 var grabbedEvent = historyItems.FirstOrDefault(h => h.EventType == MovieHistoryEventType.Grabbed);
-                var downloadGrab = _downloadHistoryService.GetLatestGrab(downloadClient.Id, downloadItem.DownloadId) ??
-                    (downloadHistory?.EventType == DownloadHistoryEventType.DownloadGrabbed ? downloadHistory : null);
+                DownloadHistory downloadGrab;
+                try
+                {
+                    if (MovieEditionOperationIdentity.HasAmbiguousOperations(historyItems.Where(h => h.EventType == MovieHistoryEventType.Grabbed).Select(h => h.EditionOperationId)))
+                    {
+                        throw new InvalidOperationException("Movie history has multiple or invalid edition submission operations. Review the download manually.");
+                    }
+
+                    downloadGrab = _downloadHistoryService.GetLatestGrab(downloadClient.Id, downloadItem.DownloadId) ??
+                        (downloadHistory?.EventType == DownloadHistoryEventType.DownloadGrabbed ? downloadHistory : null);
+                }
+                catch (InvalidOperationException exception)
+                {
+                    trackedDownload.EditionRecoveryError = exception.Message;
+                    trackedDownload.State = TrackedDownloadState.ImportBlocked;
+                    trackedDownload.Warn(exception.Message);
+                    _cache.Set(CacheKey(downloadClient.Id, downloadItem.DownloadId), trackedDownload);
+                    return trackedDownload;
+                }
+
                 if (downloadGrab?.MovieEditionId == null && grabbedEvent?.MovieEditionId == null &&
                     _historyService.FindByDownloadId(downloadItem.DownloadId)?.Any(h => h.MovieEditionId.HasValue) == true)
                 {
@@ -336,11 +354,18 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             // Validate agreement before a terminal state can suppress recovery errors.
             var movieId = downloadGrab?.MovieEditionId != null ? downloadGrab.MovieId : movieGrab.MovieId;
             var revision = downloadGrab?.MovieEditionId != null ? downloadGrab.EditionRuleRevision : movieGrab.EditionRuleRevision;
-            return (downloadGrab != null && (downloadGrab.DownloadClientId != clientId || downloadGrab.MovieId != movieId)) ||
+            var operationId = downloadGrab?.MovieEditionId != null ? downloadGrab.EditionOperationId : movieGrab.EditionOperationId;
+            if (!MovieEditionOperationIdentity.IsValid(operationId))
+            {
+                return true;
+            }
+
+            return (downloadGrab != null && (downloadGrab.DownloadClientId != clientId || downloadGrab.MovieId != movieId || downloadGrab.EditionOperationId != operationId)) ||
                 (movieGrab != null && (movieGrab.MovieId != movieId ||
+                    movieGrab.EditionOperationId != operationId ||
                     (movieGrab.MovieEditionId.HasValue && (movieGrab.MovieEditionId != editionId || movieGrab.EditionRuleRevision != revision)))) ||
                 (latest != null && (latest.DownloadClientId != clientId || latest.MovieId != movieId ||
-                    latest.MovieEditionId != editionId || latest.EditionRuleRevision != revision));
+                    latest.MovieEditionId != editionId || latest.EditionRuleRevision != revision || latest.EditionOperationId != operationId));
         }
 
         private void LogItemChange(TrackedDownload trackedDownload, DownloadClientItem existingItem, DownloadClientItem downloadItem)
