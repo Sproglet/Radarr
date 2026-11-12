@@ -28,7 +28,7 @@ c = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(c)
 p = c.p
 TABLES = ["Movies", "MovieEditions", "MovieFiles", "SubtitleFiles", "QualityProfiles", "CustomFormats",
-          "History", "DownloadHistory", "DownloadClients", "PendingReleases"]
+          "History", "DownloadHistory", "DownloadClients", "PendingReleases", "MovieEditionSubmissions"]
 
 
 def stored():
@@ -55,6 +55,31 @@ def seed_pending(clients):
             additional = {"editionName": name, "movieMatchType": 0, "releaseSource": 1}
             db.execute('''INSERT INTO "PendingReleases" ("MovieId","MovieEditionId","EditionRuleRevision","Title","Added","ParsedMovieInfo","Release","Reason","AdditionalInfo")
                 VALUES (1,?,1,?,?,?,?,0,?)''', (eid, title, stamp, json.dumps(parsed), json.dumps(release), json.dumps(additional)))
+
+
+def seed_submission_journals():
+    history = {row["EditionOperationId"]: row for row in p.rows("History") if row.get("EditionOperationId")}
+    editions = {row["Id"]: row for row in p.rows("MovieEditions")}
+    movie = p.rows("Movies")[0]
+    def payload(value):
+        return value if isinstance(value, str) else json.dumps(value)
+    with p.database() as db:
+        for grab in p.rows("DownloadHistory"):
+            if grab["EventType"] != 1:
+                continue
+            original = history[grab["EditionOperationId"]]
+            edition = editions[grab["MovieEditionId"]]
+            data = json.loads(grab["Data"]) if isinstance(grab["Data"], str) else grab["Data"]
+            # Retain accepted and recorded progress independently; neither permits another submission.
+            state = 2 if edition["Id"] == 1 else 1
+            db.execute('''INSERT INTO "MovieEditionSubmissions" ("OperationId","MovieId","MovieEditionId","EditionRuleRevision",
+                "EditionName","EditionAttributes","QualityProfileId","MovieFileId","MoviePath","DownloadClientId","DownloadClientName",
+                "Release","ParsedMovieInfo","DownloadId","State","CreatedAt","UpdatedAt","HistoryData","DownloadHistoryData","Languages","CustomFormatScore","DownloadClient")
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (grab["EditionOperationId"], grab["MovieId"], edition["Id"], grab["EditionRuleRevision"], edition["Name"], payload(edition["Attributes"]),
+                 edition["QualityProfileId"], edition["MovieFileId"], movie["Path"], grab["DownloadClientId"], "Synthetic Client", payload(grab["Release"]),
+                 '{}', grab["DownloadId"], state, grab["Date"], grab["Date"], payload(original["Data"]), payload(grab["Data"]), payload(original["Languages"]),
+                 int(data.get("customFormatScore", data.get("CustomFormatScore", 0))), "Synthetic Client"))
 
 
 def pending_queue():
@@ -138,6 +163,8 @@ def run(postgres, operation_identity=False):
                     if row["EventType"] == 1:
                         operation = "00000000-0000-4000-8000-0000000000" + ("41" if row["MovieEditionId"] == 1 else "42")
                         db.execute('UPDATE "' + table + '" SET "EditionOperationId"=? WHERE "Id"=?', (operation, row["Id"]))
+    if operation_identity:
+        seed_submission_journals()
     with p.database() as db:
         for eid in [1, 2, empty["id"]]:
             db.execute('UPDATE "MovieEditions" SET "LastSearchTime"=?,"MatchRules"=?,"RuleRevision"=? WHERE "Id"=?',
@@ -152,6 +179,9 @@ def run(postgres, operation_identity=False):
     before_media = p.snapshot()
     before = stored()
     before_operations = operation_rows()
+    if operation_identity:
+        assert {row["State"] for row in before["MovieEditionSubmissions"]} == {1, 2}
+        assert all(row["HistoryData"] is not None and row["DownloadHistoryData"] is not None for row in before["MovieEditionSubmissions"])
     if operation_identity:
         for table, rows in before_operations.items():
             assert len(rows) == 2 and {row["EditionOperationId"] for row in rows} == {
@@ -232,6 +262,9 @@ def run(postgres, operation_identity=False):
         if not postgres:
             print("PASS: SQLite restore-upload stages the built-in archive and actual process startup applies it to the fresh configuration", flush=True)
 
+        if operation_identity:
+            print("PASS: nonempty accepted/recorded submission journals restore frozen payloads, operation/client/target snapshots and durable progress without resubmission", flush=True)
+
         # New API writes prove restored identity sequences work and cannot write
         # back to the deliberately changed source database.
         added = p.api("api/v3/movieedition", {"movieId": 1, "name": "Synthetic After Restore",
@@ -251,6 +284,7 @@ def run(postgres, operation_identity=False):
             assert p.snapshot() == current
             if operation_identity:
                 assert operation_rows() == before_operations
+                assert p.rows("MovieEditionSubmissions") == before["MovieEditionSubmissions"]
             editions = p.api("api/v3/movieedition?movieId=1")
             assert {e["id"]: e["ruleRevision"] for e in editions if e["id"] in [1, 2]} == {1: 11, 2: 12}
             assert [e["id"] for e in editions if e["isPrimary"]] == [2]

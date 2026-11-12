@@ -767,6 +767,13 @@ Integrated official `Radarr/Radarr:develop` through `2f64b5cf6c4e183d395dc889b4b
 - These are explicit journal persistence/replay operations. Pre-submit client integration, notification delivery/replay coordination, automatic startup reconciliation/review controls and the other recorded real-client/crash/concurrency gates remain incomplete. The normal download entry point still rejects edition-aware acquisition. **Automatic multi-edition acquisition, edition retries and custom import scripts remain gated.**
 
 
+## Nonempty journal backup and restore (12 November 2026)
+
+- Extended `verify-edition-backup.py --operation-id` to include `MovieEditionSubmissions` in full state comparisons and seed distinct accepted/recorded operations with their immutable client/target/revision, original file/profile/path snapshots, frozen metadata and languages. Both **SQLite application restore-upload/startup** and **PostgreSQL native restore** passed into isolated fresh destinations.
+- All journal rows remain byte/value-equivalent through restore, queue recovery, housekeeping and subsequent manual upgrades/rename/restarts. Recorded file IDs remain historical snapshots after a later manual replacement. Duplicate-grab constraints remain enforced, nonempty pending intent/queue IDs and both combined editions' media remain preserved, and no client submission, acquisition or retry occurs.
+- Artifacts: `edition-atomic-grabs-backup-{sqlite,postgres}-results.log` under `_temp/edition-test-results/`. These are same-version, quiescent backups using synthetic clients/media and disposable databases; concurrent/cross-version/external-client backup remains unverified. Automatic acquisition and retries remain disabled. Nothing was pushed.
+
+
 ---
 
 # Historical Phase 2 report (10 September 2026)
