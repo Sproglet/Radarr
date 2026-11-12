@@ -4,6 +4,7 @@ using System.Data;
 using System.Linq;
 using Dapper;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.History;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Profiles.Qualities;
 
@@ -106,6 +107,32 @@ namespace NzbDrone.Core.Movies
                         AND d.""EventType"" IN (2, 3, 4)
                         AND (d.""Date"" > h.""Date"" OR (d.""Date"" = h.""Date"" AND d.""Id"" > h.""Id"")))",
                 transaction: transaction);
+            var movieGrabs = connection.Query<MovieHistory>(
+                @"SELECT h.* FROM ""History"" h
+                  WHERE h.""MovieEditionId"" IS NOT NULL AND h.""EventType"" = 1
+                    AND EXISTS (SELECT 1 FROM ""Movies"" m WHERE m.""Id"" = h.""MovieId"")
+                    AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = h.""MovieEditionId"")",
+                transaction: transaction);
+            foreach (var grab in movieGrabs)
+            {
+                // Separate history streams have no shared ordering ID. Equal timestamps
+                // cannot prove that a terminal event follows a movie-history-only grab.
+                var client = grab.Data?.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID);
+                if (!int.TryParse(client, out var clientId) || clientId <= 0 ||
+                    string.IsNullOrWhiteSpace(grab.DownloadId) || connection.ExecuteScalar<int>(
+                        @"SELECT COUNT(*) FROM ""DownloadHistory"" d
+                          WHERE d.""MovieId"" = @MovieId AND d.""MovieEditionId"" = @MovieEditionId
+                            AND d.""DownloadClientId"" = @ClientId AND d.""DownloadId"" = @DownloadId
+                            AND (d.""EditionRuleRevision"" = @EditionRuleRevision
+                              OR (d.""EditionRuleRevision"" IS NULL AND @EditionRuleRevision IS NULL))
+                            AND d.""EventType"" IN (2,3,4) AND d.""Date"" > @Date",
+                        new { grab.MovieId, grab.MovieEditionId, ClientId = clientId, grab.DownloadId, grab.EditionRuleRevision, grab.Date },
+                        transaction) == 0)
+                {
+                    references++;
+                }
+            }
+
             if (references != 0)
             {
                 throw new InvalidOperationException("Cannot remove a primary edition, an edition that still owns files, or a target with pending/in-flight work.");

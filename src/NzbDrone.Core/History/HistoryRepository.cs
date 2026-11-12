@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
@@ -30,6 +31,16 @@ namespace NzbDrone.Core.History
         public HistoryRepository(IMainDatabase database, IEventAggregator eventAggregator)
             : base(database, eventAggregator)
         {
+        }
+
+        protected override bool RequiresLifecycleTransaction => true;
+
+        protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, MovieHistory history)
+        {
+            if (history.EventType == MovieHistoryEventType.Grabbed)
+            {
+                MovieEditionGrabGuard.LockAndValidate(connection, transaction, history.MovieId, history.MovieEditionId);
+            }
         }
 
         public List<QualityModel> GetBestQualityInHistory(int movieId)

@@ -1,5 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
+using System.Threading;
+using System.Threading.Tasks;
+using Dapper;
 using FizzWare.NBuilder;
 using FluentAssertions;
 using NUnit.Framework;
@@ -88,7 +92,7 @@ namespace NzbDrone.Core.Test.MovieTests
                 ParsedMovieInfo = Parser.Parser.ParseMovieTitle("Synthetic.Voyage.2026.Directors.Cut.3D.1080p.BluRay-SyntheticGroup"),
                 Release = new ReleaseInfo { Title = "Synthetic.Voyage.2026-SyntheticGroup", Indexer = "Synthetic Indexer", PublishDate = DateTime.UtcNow }
             };
-            var message = new NzbDrone.Core.Download.MovieGrabbedEvent(remote) { DownloadId = "synthetic-download", DownloadClient = "Synthetic Client", DownloadClientName = "Synthetic Client" };
+            var message = new NzbDrone.Core.Download.MovieGrabbedEvent(remote) { DownloadId = "synthetic-download", DownloadClientId = 41, DownloadClient = "Synthetic Client", DownloadClientName = "Synthetic Client" };
             Mocker.Resolve<HistoryService>().Handle(message);
             Mocker.Resolve<DownloadHistoryService>().Handle(message);
             var record = history.MostRecentForEdition(_movie.Id, _secondary.Id);
@@ -209,7 +213,7 @@ namespace NzbDrone.Core.Test.MovieTests
                 SourceTitle = "Synthetic.Voyage.2026-SyntheticGroup", DownloadId = "synthetic-download",
                 EventType = MovieHistoryEventType.Grabbed, Date = DateTime.UtcNow,
                 Quality = new NzbDrone.Core.Qualities.QualityModel(), Languages = new List<NzbDrone.Core.Languages.Language>(),
-                Data = new Dictionary<string, string> { { "movieEditionName", _secondary.Name } }
+                Data = new Dictionary<string, string> { { "movieEditionName", _secondary.Name }, { MovieHistory.DOWNLOAD_CLIENT_ID, "41" } }
             });
             _secondary.MatchRules.Add("DifferentSyntheticGroup$");
             _secondary.Name = "Synthetic Renamed Edition";
@@ -223,10 +227,162 @@ namespace NzbDrone.Core.Test.MovieTests
             Mocker.SetConstant<IQualityProfileRepository>(Mocker.Resolve<QualityProfileRepository>());
             var recovery = new MovieEditionRecoveryService(Mocker.Resolve<MovieEditionContextService>(), _editions);
             recovery.Recover(_movie, reloaded, null).Edition.Id.Should().Be(_secondary.Id);
+            Mocker.Resolve<DownloadHistoryRepository>().Insert(new DownloadHistory
+            {
+                MovieId = _movie.Id, MovieEditionId = _secondary.Id, EditionRuleRevision = 1,
+                DownloadClientId = 41, DownloadId = record.DownloadId, SourceTitle = record.SourceTitle,
+                Date = record.Date.AddSeconds(1), EventType = DownloadHistoryEventType.DownloadImported
+            });
             _editions.Delete(_secondary.Id);
             Action recover = () => recovery.Recover(_movie, reloaded, null);
             recover.Should().Throw<InvalidOperationException>();
             history.Get(record.Id).Data["movieEditionName"].Should().Be("Directors Cut 3D");
+        }
+
+        private MovieHistory HistoryGrab(bool knownClient = true)
+        {
+            var history = new MovieHistory
+            {
+                MovieId = _movie.Id, MovieEditionId = _secondary.Id, EditionRuleRevision = 1,
+                SourceTitle = "Synthetic.Voyage.2026.Directors.Cut.3D-SyntheticGroup", DownloadId = "synthetic-history-only",
+                EventType = MovieHistoryEventType.Grabbed, Date = DateTime.UtcNow,
+                Quality = new NzbDrone.Core.Qualities.QualityModel(), Languages = new List<NzbDrone.Core.Languages.Language>(),
+                Data = new Dictionary<string, string> { { "movieEditionName", _secondary.Name } }
+            };
+            if (knownClient)
+            {
+                history.Data[MovieHistory.DOWNLOAD_CLIENT_ID] = "41";
+            }
+
+            return history;
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void typed_movie_history_insert_rejects_missing_or_foreign_owner(bool foreignMovie)
+        {
+            var history = Mocker.Resolve<HistoryRepository>();
+            var grab = HistoryGrab();
+            if (foreignMovie)
+            {
+                grab.MovieId += 999;
+            }
+            else
+            {
+                grab.MovieEditionId += 999;
+            }
+
+            Action insert = () => history.Insert(grab);
+
+            insert.Should().Throw<InvalidOperationException>();
+            history.All().Should().BeEmpty();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task grab_insert_waits_for_parent_lock_and_rejects_a_concurrently_removed_target(bool downloadHistory)
+        {
+            var history = Mocker.Resolve<HistoryRepository>();
+            var downloads = Mocker.Resolve<DownloadHistoryRepository>();
+            var grab = HistoryGrab();
+            using var started = new ManualResetEventSlim();
+            using var connection = Db.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @Id", _movie, transaction);
+            var insert = Task.Run(() =>
+            {
+                started.Set();
+                try
+                {
+                    if (downloadHistory)
+                    {
+                        downloads.Insert(new DownloadHistory
+                        {
+                            MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision,
+                            DownloadClientId = 41, DownloadId = grab.DownloadId, SourceTitle = grab.SourceTitle,
+                            Date = grab.Date, EventType = DownloadHistoryEventType.DownloadGrabbed
+                        });
+                    }
+                    else
+                    {
+                        history.Insert(grab);
+                    }
+
+                    return (Exception)null;
+                }
+                catch (Exception exception)
+                {
+                    return exception;
+                }
+            });
+            try
+            {
+                started.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
+                (await Task.WhenAny(insert, Task.Delay(100))).Should().NotBe(insert);
+                connection.Execute(@"DELETE FROM ""MovieEditions"" WHERE ""Id"" = @Id", _secondary, transaction);
+                transaction.Commit();
+            }
+            finally
+            {
+                transaction.Dispose();
+            }
+
+            var completed = await Task.WhenAny(insert, Task.Delay(TimeSpan.FromSeconds(10)));
+            completed.Should().Be(insert);
+            (await insert).Should().BeOfType<InvalidOperationException>();
+            history.All().Should().BeEmpty();
+            downloads.All().Should().BeEmpty();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void history_only_grab_blocks_target_deletion_with_known_or_unknown_client(bool knownClient)
+        {
+            Mocker.Resolve<HistoryRepository>().Insert(HistoryGrab(knownClient));
+
+            Action remove = () => _editions.Delete(_secondary.Id);
+
+            remove.Should().Throw<InvalidOperationException>();
+            _editions.Find(_secondary.Id).Should().NotBeNull();
+        }
+
+        [Test]
+        public void history_only_grab_requires_a_matching_later_terminal_before_deletion(
+            [Values(DownloadHistoryEventType.DownloadImported, DownloadHistoryEventType.DownloadFailed, DownloadHistoryEventType.DownloadIgnored)] DownloadHistoryEventType eventType,
+            [Values("movie", "target", "unassigned", "revision", "unknown-revision", "client", "download", "older", "equal-time", "matching")] string evidence)
+        {
+            var grab = Mocker.Resolve<HistoryRepository>().Insert(HistoryGrab());
+            var terminal = new DownloadHistory
+            {
+                MovieId = _movie.Id, MovieEditionId = _secondary.Id, EditionRuleRevision = 1,
+                DownloadClientId = 41, DownloadId = grab.DownloadId, SourceTitle = grab.SourceTitle,
+                Date = grab.Date.AddSeconds(1), EventType = eventType
+            };
+            if (evidence == "movie") terminal.MovieId += 999;
+            if (evidence == "target") terminal.MovieEditionId = _primary.Id;
+            if (evidence == "unassigned") terminal.MovieEditionId = null;
+            if (evidence == "revision") terminal.EditionRuleRevision = 2;
+            if (evidence == "unknown-revision") terminal.EditionRuleRevision = null;
+            if (evidence == "client") terminal.DownloadClientId++;
+            if (evidence == "download") terminal.DownloadId = "synthetic-other-history";
+            if (evidence == "older") terminal.Date = grab.Date.AddSeconds(-1);
+            if (evidence == "equal-time") terminal.Date = grab.Date;
+            Mocker.Resolve<DownloadHistoryRepository>().Insert(terminal);
+            _secondary.MatchRules.Add("ChangedSyntheticGroup$");
+            _editions.Update(_secondary);
+
+            Action remove = () => _editions.Delete(_secondary.Id);
+            if (evidence == "matching")
+            {
+                remove.Should().NotThrow();
+                _editions.Find(_secondary.Id).Should().BeNull();
+                Mocker.Resolve<HistoryRepository>().Get(grab.Id).EditionRuleRevision.Should().Be(1);
+            }
+            else
+            {
+                remove.Should().Throw<InvalidOperationException>();
+                _editions.Find(_secondary.Id).Should().NotBeNull();
+            }
         }
     }
 }
