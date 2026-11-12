@@ -6,7 +6,8 @@ pg_dump/pg_restore 16 and the dedicated radarr-edition-postgres Docker alias.
 SQLite uses the real application backup archive. PostgreSQL's application backup
 is config-only, so its database is restored from a separate native dump.
 SQLite exercises the real restore-upload endpoint and startup restoration;
-PostgreSQL uses offline native restoration. The browser restore UI is not tested.
+PostgreSQL uses offline native restoration. Add --operation-id to verify shared
+grab IDs and restored uniqueness indexes. The browser restore UI is not tested.
 """
 
 import importlib.util
@@ -14,6 +15,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import urllib.request
@@ -91,7 +93,33 @@ def restore_upload(archive):
         assert json.loads(response.read())["restartRequired"] is True
 
 
-def run(postgres):
+def operation_rows():
+    return {table: [row for row in p.rows(table) if row.get("EditionOperationId") is not None]
+            for table in ("History", "DownloadHistory")}
+
+
+def verify_operation_indexes(expected):
+    assert p.PROCESS is None or p.PROCESS.poll() is not None
+    assert operation_rows() == expected
+    for table, rows in expected.items():
+        grab = next(row for row in rows if row["EventType"] == 1)
+        columns = ",".join('"' + name + '"' for name in grab if name != "Id")
+        try:
+            with p.database() as db:
+                db.execute('INSERT INTO "' + table + '" (' + columns + ') SELECT ' + columns +
+                           ' FROM "' + table + '" WHERE "Id"=?', (grab["Id"],))
+        except Exception as error:
+            if p.DATABASE.postgres:
+                import psycopg2.errors
+                assert isinstance(error, psycopg2.errors.UniqueViolation), error
+            else:
+                assert isinstance(error, sqlite3.IntegrityError), error
+        else:
+            raise AssertionError("Restored operation index accepted a duplicate grab in " + table)
+    assert operation_rows() == expected
+
+
+def run(postgres, operation_identity=False):
     if postgres:
         p.DATABASE.enable_postgres()
     p.run()
@@ -103,6 +131,13 @@ def run(postgres):
     c.SERVERS.extend(clients)
     p.stop()
     c.seed(clients, secondary)
+    if operation_identity:
+        with p.database() as db:
+            for table in ("History", "DownloadHistory"):
+                for row in p.rows(table):
+                    if row["EventType"] == 1:
+                        operation = "00000000-0000-4000-8000-0000000000" + ("41" if row["MovieEditionId"] == 1 else "42")
+                        db.execute('UPDATE "' + table + '" SET "EditionOperationId"=? WHERE "Id"=?', (operation, row["Id"]))
     with p.database() as db:
         for eid in [1, 2, empty["id"]]:
             db.execute('UPDATE "MovieEditions" SET "LastSearchTime"=?,"MatchRules"=?,"RuleRevision"=? WHERE "Id"=?',
@@ -116,6 +151,11 @@ def run(postgres):
     before_pending = pending_queue()
     before_media = p.snapshot()
     before = stored()
+    before_operations = operation_rows()
+    if operation_identity:
+        for table, rows in before_operations.items():
+            assert len(rows) == 2 and {row["EditionOperationId"] for row in rows} == {
+                "00000000-0000-4000-8000-000000000041", "00000000-0000-4000-8000-000000000042"}, (table, rows)
     assert before["Movies"][0]["QualityProfileId"] == 1 and before["Movies"][0]["PrimaryEditionId"] == 2
     assert before["MovieEditions"][1]["QualityProfileId"] == secondary and before["MovieEditions"][1]["Monitored"]
     assert len([row for row in before["History"] if row.get("DownloadId") == c.SHARED]) == 2
@@ -169,6 +209,10 @@ def run(postgres):
             p.start()
             p.stop()
         assert stored() == before
+        if operation_identity:
+            verify_operation_indexes(before_operations)
+            assert stored() == before
+            print("PASS: restored shared operation IDs retain their saved client/edition/revision, and both restored indexes reject duplicate grabs transactionally", flush=True)
         assert next(e for e in source_database.rows("MovieEditions") if e["Id"] == empty["id"])["Name"] == "Synthetic Changed After Backup"
         p.start()
         assert stored() == before and p.snapshot() == before_media
@@ -205,6 +249,8 @@ def run(postgres):
             p.stop()
             p.start()
             assert p.snapshot() == current
+            if operation_identity:
+                assert operation_rows() == before_operations
             editions = p.api("api/v3/movieedition?movieId=1")
             assert {e["id"]: e["ruleRevision"] for e in editions if e["id"] in [1, 2]} == {1: 11, 2: 12}
             assert [e["id"] for e in editions if e["isPrimary"]] == [2]
@@ -218,9 +264,9 @@ def run(postgres):
 
 if __name__ == "__main__":
     try:
-        if sys.argv[1:] not in ([], ["--postgres"]):
-            raise ValueError("Only --postgres is supported")
-        run(sys.argv[1:] == ["--postgres"])
+        if any(arg not in {"--postgres", "--operation-id"} for arg in sys.argv[1:]) or len(set(sys.argv[1:])) != len(sys.argv[1:]):
+            raise ValueError("Only --postgres and --operation-id are supported")
+        run("--postgres" in sys.argv[1:], "--operation-id" in sys.argv[1:])
     finally:
         p.stop()
         try:
