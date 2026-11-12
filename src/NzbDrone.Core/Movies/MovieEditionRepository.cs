@@ -39,13 +39,17 @@ namespace NzbDrone.Core.Movies
 
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, MovieEdition edition, List<string> properties)
         {
-            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" =
-                (SELECT ""MovieId"" FROM ""MovieEditions"" WHERE ""Id"" = @Id)", new { edition.Id }, transaction);
+            connection.Execute(
+                @"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" =
+                (SELECT ""MovieId"" FROM ""MovieEditions"" WHERE ""Id"" = @Id)",
+                new { edition.Id },
+                transaction);
             var stored = connection.QuerySingle<MovieEdition>(@"SELECT * FROM ""MovieEditions"" WHERE ""Id"" = @Id", new { edition.Id }, transaction);
             if (properties.Contains(nameof(MovieEdition.QualityProfileId)) && edition.QualityProfileId != stored.QualityProfileId)
             {
                 LockProfile(connection, transaction, edition.QualityProfileId);
             }
+
             if (properties.Contains(nameof(MovieEdition.MatchRules)))
             {
                 MovieEditionClassifier.ValidateRules(edition.MatchRules);
@@ -58,8 +62,10 @@ namespace NzbDrone.Core.Movies
             edition.RuleRevision = rulesChanged || attributesChanged ? checked(stored.RuleRevision + 1) : stored.RuleRevision;
             if (rulesChanged || attributesChanged)
             {
-                connection.Execute(@"UPDATE ""MovieEditions"" SET ""RuleRevision"" = @RuleRevision WHERE ""Id"" = @Id",
-                    new { edition.Id, edition.RuleRevision }, transaction);
+                connection.Execute(
+                    @"UPDATE ""MovieEditions"" SET ""RuleRevision"" = @RuleRevision WHERE ""Id"" = @Id",
+                    new { edition.Id, edition.RuleRevision },
+                    transaction);
             }
 
             if ((properties.Contains(nameof(MovieEdition.MovieId)) && edition.MovieId != stored.MovieId) ||
@@ -73,16 +79,23 @@ namespace NzbDrone.Core.Movies
         {
             // Roll back removal if either the primary selection or any retained file still refers to it.
             connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored""", transaction: transaction);
-            var references = connection.ExecuteScalar<int>(@"SELECT COUNT(*) FROM ""Movies"" m
+            var references = connection.ExecuteScalar<int>(
+                @"SELECT COUNT(*) FROM ""Movies"" m
                 WHERE m.""PrimaryEditionId"" IS NOT NULL AND NOT EXISTS
-                    (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = m.""PrimaryEditionId"")", transaction: transaction);
-            references += connection.ExecuteScalar<int>(@"SELECT COUNT(*) FROM ""MovieFiles"" f
+                    (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = m.""PrimaryEditionId"")",
+                transaction: transaction);
+            references += connection.ExecuteScalar<int>(
+                @"SELECT COUNT(*) FROM ""MovieFiles"" f
                 WHERE f.""MovieEditionId"" IS NOT NULL AND NOT EXISTS
-                    (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = f.""MovieEditionId"")", transaction: transaction);
-            references += connection.ExecuteScalar<int>(@"SELECT COUNT(*) FROM ""PendingReleases"" p
+                    (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = f.""MovieEditionId"")",
+                transaction: transaction);
+            references += connection.ExecuteScalar<int>(
+                @"SELECT COUNT(*) FROM ""PendingReleases"" p
                 WHERE p.""MovieEditionId"" IS NOT NULL AND NOT EXISTS
-                    (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = p.""MovieEditionId"")", transaction: transaction);
-            references += connection.ExecuteScalar<int>(@"SELECT COUNT(*) FROM ""DownloadHistory"" h
+                    (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = p.""MovieEditionId"")",
+                transaction: transaction);
+            references += connection.ExecuteScalar<int>(
+                @"SELECT COUNT(*) FROM ""DownloadHistory"" h
                 WHERE h.""MovieEditionId"" IS NOT NULL AND h.""EventType"" = 1
                   AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = h.""MovieEditionId"")
                   AND NOT EXISTS (SELECT 1 FROM ""DownloadHistory"" d
@@ -91,7 +104,8 @@ namespace NzbDrone.Core.Movies
                         AND (d.""EditionRuleRevision"" = h.""EditionRuleRevision""
                           OR (d.""EditionRuleRevision"" IS NULL AND h.""EditionRuleRevision"" IS NULL))
                         AND d.""EventType"" IN (2, 3, 4)
-                        AND (d.""Date"" > h.""Date"" OR (d.""Date"" = h.""Date"" AND d.""Id"" > h.""Id"")))", transaction: transaction);
+                        AND (d.""Date"" > h.""Date"" OR (d.""Date"" = h.""Date"" AND d.""Id"" > h.""Id"")))",
+                transaction: transaction);
             if (references != 0)
             {
                 throw new InvalidOperationException("Cannot remove a primary edition, an edition that still owns files, or a target with pending/in-flight work.");
@@ -189,9 +203,12 @@ namespace NzbDrone.Core.Movies
             }
 
             LockProfile(connection, transaction, target.QualityProfileId);
-            if (target.MovieFileId.HasValue && !connection.ExecuteScalar<bool>(@"SELECT EXISTS (SELECT 1 FROM ""MovieFiles"" f
+            if (target.MovieFileId.HasValue && !connection.ExecuteScalar<bool>(
+                @"SELECT EXISTS (SELECT 1 FROM ""MovieFiles"" f
                 WHERE f.""Id"" = @MovieFileId AND f.""MovieId"" = @MovieId AND f.""MovieEditionId"" = @Id
-                  AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" other WHERE other.""MovieFileId"" = f.""Id"" AND other.""Id"" <> @Id))", target, transaction))
+                  AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" other WHERE other.""MovieFileId"" = f.""Id"" AND other.""Id"" <> @Id))",
+                target,
+                transaction))
             {
                 throw new InvalidOperationException("Repair the edition's current-file ownership before editing its definition.");
             }
@@ -200,8 +217,11 @@ namespace NzbDrone.Core.Movies
             target.Name = proposed.Name.Trim();
             target.Attributes = proposed.Attributes;
             target.MatchRules = proposed.MatchRules;
-            connection.Execute(@"UPDATE ""MovieEditions"" SET ""Name"" = @Name, ""Attributes"" = @Attributes,
-                ""MatchRules"" = @MatchRules, ""RuleRevision"" = @RuleRevision WHERE ""Id"" = @Id", target, transaction);
+            connection.Execute(
+                @"UPDATE ""MovieEditions"" SET ""Name"" = @Name, ""Attributes"" = @Attributes,
+                ""MatchRules"" = @MatchRules, ""RuleRevision"" = @RuleRevision WHERE ""Id"" = @Id",
+                target,
+                transaction);
             transaction.Commit();
             return target;
         }
@@ -273,10 +293,13 @@ namespace NzbDrone.Core.Movies
                 MovieEditionClassifier.ValidateRules(target.MatchRules);
                 if (target.MovieFileId.HasValue)
                 {
-                    var valid = connection.ExecuteScalar<bool>(@"SELECT EXISTS (SELECT 1 FROM ""MovieFiles"" f
+                    var valid = connection.ExecuteScalar<bool>(
+                        @"SELECT EXISTS (SELECT 1 FROM ""MovieFiles"" f
                         WHERE f.""Id"" = @MovieFileId AND f.""MovieId"" = @MovieId AND f.""MovieEditionId"" = @Id
                           AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" other
-                            WHERE other.""MovieFileId"" = f.""Id"" AND other.""Id"" <> @Id))", target, transaction);
+                            WHERE other.""MovieFileId"" = f.""Id"" AND other.""Id"" <> @Id))",
+                        target,
+                        transaction);
                     if (!valid)
                     {
                         throw new InvalidOperationException("Repair the edition's current-file ownership before enabling monitoring.");
@@ -334,14 +357,16 @@ namespace NzbDrone.Core.Movies
 
         private static void SetPrimary(IDbConnection connection, IDbTransaction transaction, int movieId, int editionId)
         {
-            var updated = connection.Execute(@"UPDATE ""Movies"" SET ""PrimaryEditionId"" = @EditionId,
+            var updated = connection.Execute(
+                @"UPDATE ""Movies"" SET ""PrimaryEditionId"" = @EditionId,
                 ""LastSearchTime"" = (SELECT ""LastSearchTime"" FROM ""MovieEditions"" WHERE ""Id"" = @EditionId),
                 ""MovieFileId"" = COALESCE((SELECT ""MovieFileId"" FROM ""MovieEditions"" WHERE ""Id"" = @EditionId), 0)
                 WHERE ""Id"" = @MovieId AND EXISTS (SELECT 1 FROM ""MovieEditions"" e
                     WHERE e.""Id"" = @EditionId AND e.""MovieId"" = @MovieId AND
                     (e.""MovieFileId"" IS NULL OR EXISTS (SELECT 1 FROM ""MovieFiles"" f
                       WHERE f.""Id"" = e.""MovieFileId"" AND f.""MovieId"" = @MovieId AND f.""MovieEditionId"" = e.""Id"")))",
-                new { MovieId = movieId, EditionId = editionId }, transaction);
+                new { MovieId = movieId, EditionId = editionId },
+                transaction);
             if (updated != 1)
             {
                 throw new InvalidOperationException("The primary edition must belong to the movie and have valid file ownership.");
@@ -363,33 +388,40 @@ namespace NzbDrone.Core.Movies
             connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId", new { MovieId = movieId }, transaction);
             var parameters = new { MovieId = movieId, EditionId = editionId, FileId = fileId, ExpectedFileId = expectedFileId };
 
-            var claimed = connection.Execute(@"UPDATE ""MovieFiles""
+            var claimed = connection.Execute(
+                @"UPDATE ""MovieFiles""
                 SET ""MovieEditionId"" = @EditionId
                 WHERE ""Id"" = @FileId AND ""MovieId"" = @MovieId
                   AND (""MovieEditionId"" IS NULL OR ""MovieEditionId"" = @EditionId)
                   AND EXISTS (SELECT 1 FROM ""Movies"" WHERE ""Id"" = @MovieId)
                   AND EXISTS (SELECT 1 FROM ""MovieEditions"" WHERE ""Id"" = @EditionId AND ""MovieId"" = @MovieId)
                   AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" WHERE ""MovieFileId"" = @FileId AND ""Id"" <> @EditionId)",
-                parameters, transaction);
+                parameters,
+                transaction);
 
             if (claimed != 1)
             {
                 throw new InvalidOperationException("The movie file must belong to the target movie and cannot belong to another edition.");
             }
 
-            var updated = connection.Execute(@"UPDATE ""MovieEditions""
+            var updated = connection.Execute(
+                @"UPDATE ""MovieEditions""
                 SET ""MovieFileId"" = @FileId
                 WHERE ""Id"" = @EditionId AND ""MovieId"" = @MovieId
                   AND (""MovieFileId"" = @ExpectedFileId OR (""MovieFileId"" IS NULL AND @ExpectedFileId IS NULL))",
-                parameters, transaction);
+                parameters,
+                transaction);
 
             if (updated != 1)
             {
                 throw new InvalidOperationException("The edition's current file changed. Reload the edition before assigning a file.");
             }
 
-            connection.Execute(@"UPDATE ""Movies"" SET ""MovieFileId"" = @FileId
-                WHERE ""Id"" = @MovieId AND ""PrimaryEditionId"" = @EditionId", parameters, transaction);
+            connection.Execute(
+                @"UPDATE ""Movies"" SET ""MovieFileId"" = @FileId
+                WHERE ""Id"" = @MovieId AND ""PrimaryEditionId"" = @EditionId",
+                parameters,
+                transaction);
         }
     }
 }

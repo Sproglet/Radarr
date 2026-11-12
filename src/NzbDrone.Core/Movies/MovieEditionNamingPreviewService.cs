@@ -48,9 +48,15 @@ namespace NzbDrone.Core.Movies
         private readonly IBuildFileNames _names;
         private readonly ICustomFormatCalculationService _formats;
 
-        public MovieEditionNamingPreviewService(IMovieRepository movies, IMovieEditionRepository editions,
-            IMovieEditionContextService contexts, IMediaFileRepository files, IQualityProfileRepository profiles,
-            INamingConfigService naming, IBuildFileNames names, ICustomFormatCalculationService formats)
+        public MovieEditionNamingPreviewService(
+            IMovieRepository movies,
+            IMovieEditionRepository editions,
+            IMovieEditionContextService contexts,
+            IMediaFileRepository files,
+            IQualityProfileRepository profiles,
+            INamingConfigService naming,
+            IBuildFileNames names,
+            ICustomFormatCalculationService formats)
         {
             _movies = movies;
             _editions = editions;
@@ -111,6 +117,7 @@ namespace NzbDrone.Core.Movies
             {
                 throw new ArgumentException("Change the edition profile separately before editing its definition.");
             }
+
             var proposed = new MovieEdition
             {
                 Id = original?.Id ?? 0, MovieId = movie.Id, Name = proposal.Name.Trim(), QualityProfileId = profile.Id,
@@ -131,10 +138,12 @@ namespace NzbDrone.Core.Movies
                     result.Rejections.Add("The edition rule revision cannot advance. Repair its stored revision before changing classification.");
                 }
             }
+
             if (editions.Any(e => e.Id != proposed.Id && string.Equals(e.Name, proposed.Name, StringComparison.OrdinalIgnoreCase)))
             {
                 result.Rejections.Add("An edition with this name already exists for the movie.");
             }
+
             if (!config.RenameMovies || !(config.StandardMovieFormat?.Contains("{Managed Edition}", StringComparison.OrdinalIgnoreCase) ?? false))
             {
                 result.Rejections.Add("Enable movie renaming and use the full {Managed Edition} token without truncation before adding another edition.");
@@ -168,6 +177,7 @@ namespace NzbDrone.Core.Movies
                 result.Rejections.Add("Repair the reference file's extension before previewing another target.");
                 return result;
             }
+
             // The detached movie has no path, so FileNameBuilder cannot trigger media-info refreshes.
             var previewMovie = new Movie { Id = movie.Id, MovieMetadataId = movie.MovieMetadataId, MovieMetadata = movie.MovieMetadata };
             var knownFiles = _files.GetFilesByMovie(movie.Id);

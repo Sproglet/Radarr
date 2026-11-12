@@ -114,6 +114,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             var grabs = history.Where(h => h.EventType == MovieHistoryEventType.Grabbed && !string.IsNullOrWhiteSpace(h.DownloadId)).ToList();
 
             var editions = _editions.GetByMovie(subject.Movie.Id);
+
             // A known release remains shared while that imported file is still current.
             // Historical imports must not prevent reacquiring a missing/replaced file.
             foreach (var grab in grabs.Where(g => history.Any(h => IsImportOf(h, g) && h.MovieEditionId.HasValue &&

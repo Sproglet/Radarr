@@ -2,8 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Download.History;
+using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
@@ -75,6 +75,7 @@ namespace NzbDrone.Core.Download
                     {
                         trackedDownload.Warn(trackedDownload.DownloadItem.IsEncrypted ? "Download is encrypted and wasn't grabbed by Radarr, skipping automatic download handling" : "Download has failed wasn't grabbed by Radarr, skipping automatic download handling");
                     }
+
                     return;
                 }
 

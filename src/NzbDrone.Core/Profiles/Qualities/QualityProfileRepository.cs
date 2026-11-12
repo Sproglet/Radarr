@@ -43,11 +43,14 @@ namespace NzbDrone.Core.Profiles.Qualities
                 parameters.Add(name, id);
                 return "@" + name;
             }));
-            var used = connection.Query<int>($@"SELECT ""QualityProfileId"" FROM ""MovieEditions"" WHERE ""QualityProfileId"" IN ({selectedIds})
+            var used = connection.Query<int>(
+                $@"SELECT ""QualityProfileId"" FROM ""MovieEditions"" WHERE ""QualityProfileId"" IN ({selectedIds})
                 UNION SELECT ""QualityProfileId"" FROM ""Movies"" WHERE ""QualityProfileId"" IN ({selectedIds})
                 UNION SELECT ""QualityProfileId"" FROM ""ImportLists"" WHERE ""QualityProfileId"" IN ({selectedIds})
                 UNION SELECT ""QualityProfileId"" FROM ""Collections"" WHERE ""QualityProfileId"" IN ({selectedIds})
-                LIMIT 1", parameters, transaction).FirstOrDefault();
+                LIMIT 1",
+                parameters,
+                transaction).FirstOrDefault();
             if (used != 0)
             {
                 throw new QualityProfileInUseException(used);

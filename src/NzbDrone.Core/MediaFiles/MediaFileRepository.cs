@@ -38,14 +38,22 @@ namespace NzbDrone.Core.MediaFiles
                     throw new InvalidOperationException("The file and its edition context must belong to the same movie.");
                 }
 
-                MovieEditionRepository.AssignCurrentFile(connection, transaction, file.MovieId, file.MovieEditionId.Value,
-                    file.Id, file.EditionContext.Edition.MovieFileId);
+                MovieEditionRepository.AssignCurrentFile(
+                    connection,
+                    transaction,
+                    file.MovieId,
+                    file.MovieEditionId.Value,
+                    file.Id,
+                    file.EditionContext.Edition.MovieFileId);
                 return;
             }
 
-            var primary = connection.QuerySingleOrDefault<MovieEdition>(@"SELECT e.* FROM ""MovieEditions"" e
+            var primary = connection.QuerySingleOrDefault<MovieEdition>(
+                @"SELECT e.* FROM ""MovieEditions"" e
                 JOIN ""Movies"" m ON m.""PrimaryEditionId"" = e.""Id"" AND m.""Id"" = e.""MovieId""
-                WHERE m.""Id"" = @MovieId", new { file.MovieId }, transaction);
+                WHERE m.""Id"" = @MovieId",
+                new { file.MovieId },
+                transaction);
             if (primary == null || (file.MovieEditionId.HasValue && file.MovieEditionId != primary.Id))
             {
                 throw new InvalidOperationException("Legacy imports require the movie's primary edition. Multi-edition import is not enabled.");
@@ -57,8 +65,11 @@ namespace NzbDrone.Core.MediaFiles
 
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, MovieFile file, List<string> properties)
         {
-            connection.Execute(@"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" =
-                (SELECT ""MovieId"" FROM ""MovieFiles"" WHERE ""Id"" = @Id)", new { file.Id }, transaction);
+            connection.Execute(
+                @"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" =
+                (SELECT ""MovieId"" FROM ""MovieFiles"" WHERE ""Id"" = @Id)",
+                new { file.Id },
+                transaction);
             var stored = connection.QuerySingle<MovieFile>(@"SELECT * FROM ""MovieFiles"" WHERE ""Id"" = @Id", new { file.Id }, transaction);
             if (stored.MovieEditionId.HasValue && file.MovieId != stored.MovieId && properties.Contains(nameof(MovieFile.MovieId)))
             {
@@ -71,10 +82,14 @@ namespace NzbDrone.Core.MediaFiles
 
         protected override void OnDeleted(IDbConnection connection, IDbTransaction transaction)
         {
-            connection.Execute(@"UPDATE ""MovieEditions"" SET ""MovieFileId"" = NULL WHERE ""MovieFileId"" IS NOT NULL
-                AND NOT EXISTS (SELECT 1 FROM ""MovieFiles"" f WHERE f.""Id"" = ""MovieEditions"".""MovieFileId"")", transaction: transaction);
-            connection.Execute(@"UPDATE ""Movies"" SET ""MovieFileId"" = 0 WHERE ""MovieFileId"" <> 0
-                AND NOT EXISTS (SELECT 1 FROM ""MovieFiles"" f WHERE f.""Id"" = ""Movies"".""MovieFileId"")", transaction: transaction);
+            connection.Execute(
+                @"UPDATE ""MovieEditions"" SET ""MovieFileId"" = NULL WHERE ""MovieFileId"" IS NOT NULL
+                AND NOT EXISTS (SELECT 1 FROM ""MovieFiles"" f WHERE f.""Id"" = ""MovieEditions"".""MovieFileId"")",
+                transaction: transaction);
+            connection.Execute(
+                @"UPDATE ""Movies"" SET ""MovieFileId"" = 0 WHERE ""MovieFileId"" <> 0
+                AND NOT EXISTS (SELECT 1 FROM ""MovieFiles"" f WHERE f.""Id"" = ""Movies"".""MovieFileId"")",
+                transaction: transaction);
         }
 
         public List<MovieFile> GetFilesByMovie(int movieId)

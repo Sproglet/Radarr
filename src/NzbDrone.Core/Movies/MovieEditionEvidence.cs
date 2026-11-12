@@ -29,6 +29,7 @@ namespace NzbDrone.Core.Movies
             tags = tags.Replace('.', ' ');
             var labels = new List<string>();
             var remaining = tags;
+
             // Preserve separate/conflicting labels rather than taking only the parser's first cut.
             for (var i = 0; i < 32; i++)
             {

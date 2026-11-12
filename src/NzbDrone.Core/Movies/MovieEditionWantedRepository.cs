@@ -15,6 +15,13 @@ namespace NzbDrone.Core.Movies
 
     public class MovieEditionWantedRepository : IMovieEditionWantedRepository
     {
+        private const string Joins = @" FROM ""MovieEditions"" e
+            JOIN ""Movies"" m ON m.""Id"" = e.""MovieId""
+            JOIN ""MovieMetadata"" metadata ON metadata.""Id"" = m.""MovieMetadataId""
+            LEFT JOIN ""QualityProfiles"" profile ON profile.""Id"" = e.""QualityProfileId""
+            LEFT JOIN ""MovieFiles"" f ON f.""Id"" = e.""MovieFileId""
+                AND f.""MovieId"" = e.""MovieId"" AND f.""MovieEditionId"" = e.""Id"" ";
+
         private readonly IMainDatabase _database;
         private static readonly Dictionary<string, string> SortColumns = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -23,13 +30,6 @@ namespace NzbDrone.Core.Movies
             ["editionName"] = "e.\"Name\"",
             ["lastSearchTime"] = "e.\"LastSearchTime\""
         };
-
-        private const string Joins = @" FROM ""MovieEditions"" e
-            JOIN ""Movies"" m ON m.""Id"" = e.""MovieId""
-            JOIN ""MovieMetadata"" metadata ON metadata.""Id"" = m.""MovieMetadataId""
-            LEFT JOIN ""QualityProfiles"" profile ON profile.""Id"" = e.""QualityProfileId""
-            LEFT JOIN ""MovieFiles"" f ON f.""Id"" = e.""MovieFileId""
-                AND f.""MovieId"" = e.""MovieId"" AND f.""MovieEditionId"" = e.""Id"" ";
 
         public MovieEditionWantedRepository(IMainDatabase database)
         {
@@ -53,17 +53,20 @@ namespace NzbDrone.Core.Movies
             }
 
             var direction = page.SortDirection == SortDirection.Descending ? "DESC" : "ASC";
+
             // monitored=false is the complement of effective monitoring, including a disabled edition under an enabled parent.
             var where = " WHERE (m.\"Monitored\" AND e.\"Monitored\") = @Monitored AND (" + predicate + ")";
             var parameters = new { Monitored = monitored, Limit = page.PageSize, Offset = ((long)page.Page - 1) * page.PageSize };
             using var connection = _database.OpenConnection();
             page.TotalRecords = connection.QuerySingle<int>("SELECT COUNT(*)" + Joins + where, parameters);
-            page.Records = connection.Query<MovieEditionWanted>(@"SELECT e.*,
+            page.Records = connection.Query<MovieEditionWanted>(
+                @"SELECT e.*,
                 metadata.""Title"" AS ""MovieTitle"", metadata.""Year"" AS ""Year"", metadata.""TmdbId"" AS ""TmdbId"",
                 m.""Monitored"" AS ""MovieMonitored"", m.""PrimaryEditionId"" AS ""PrimaryEditionId"",
                 (profile.""Id"" IS NOT NULL) AS ""ProfileExists"", profile.""Name"" AS ""QualityProfileName"",
                 f.""Id"" AS ""ResolvedMovieFileId"", f.""RelativePath"" AS ""RelativePath"", f.""Quality"" AS ""Quality""" +
-                Joins + where + $" ORDER BY {sortColumn} {direction} NULLS LAST, e.\"Id\" ASC LIMIT @Limit OFFSET @Offset", parameters).ToList();
+                Joins + where + $" ORDER BY {sortColumn} {direction} NULLS LAST, e.\"Id\" ASC LIMIT @Limit OFFSET @Offset",
+                parameters).ToList();
             return page;
         }
     }

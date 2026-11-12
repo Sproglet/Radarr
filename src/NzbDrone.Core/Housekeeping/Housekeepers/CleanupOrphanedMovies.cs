@@ -18,11 +18,13 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
         {
             using var mapper = _database.OpenConnection();
             using var transaction = mapper.BeginTransaction(IsolationLevel.ReadCommitted);
-            mapper.Execute(@"DELETE FROM ""Movies""
+            mapper.Execute(
+                @"DELETE FROM ""Movies""
                              WHERE ""Id"" IN (
                              SELECT ""Movies"".""Id"" FROM ""Movies""
                              LEFT OUTER JOIN ""MovieMetadata"" ON ""Movies"".""MovieMetadataId"" = ""MovieMetadata"".""Id""
-                             WHERE ""MovieMetadata"".""Id"" IS NULL)", transaction: transaction);
+                             WHERE ""MovieMetadata"".""Id"" IS NULL)",
+                transaction: transaction);
             MovieEditionLifecycle.Repair(mapper, transaction);
             transaction.Commit();
         }

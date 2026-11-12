@@ -30,8 +30,15 @@ namespace NzbDrone.Core.Movies
         private readonly IMovieEditionContextService _contexts;
         private readonly IMovieEditionClassifier _classifier;
 
-        public MovieEditionManagementService(IMovieRepository movies, IMovieEditionRepository editions,
-            IMovieEditionNamingPreviewService preview, IEditionFilePathGuard paths, IDiskProvider disk, IEventAggregator events, IMovieEditionContextService contexts, IMovieEditionClassifier classifier)
+        public MovieEditionManagementService(
+            IMovieRepository movies,
+            IMovieEditionRepository editions,
+            IMovieEditionNamingPreviewService preview,
+            IEditionFilePathGuard paths,
+            IDiskProvider disk,
+            IEventAggregator events,
+            IMovieEditionContextService contexts,
+            IMovieEditionClassifier classifier)
         {
             _movies = movies;
             _editions = editions;
@@ -228,6 +235,7 @@ namespace NzbDrone.Core.Movies
             {
                 preview.SampleClassification = _classifier.ClassifyProposed(preview.ProposedEdition, change.SampleTitle);
             }
+
             if (!preview.NamingValid)
             {
                 return preview;

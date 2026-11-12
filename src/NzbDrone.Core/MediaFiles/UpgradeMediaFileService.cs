@@ -3,11 +3,11 @@ using System.IO;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Core.MediaFiles.MovieImport;
 using NzbDrone.Core.Configuration;
-using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.MediaFiles.MovieImport;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Organizer;
+using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.MediaFiles
 {
@@ -67,6 +67,7 @@ namespace NzbDrone.Core.MediaFiles
                 {
                     throw new InvalidOperationException("Custom import scripts are disabled for multi-edition movies until edition-aware script recovery is supported.");
                 }
+
                 if (movieFile.MovieEditionId != localMovie.EditionContext.Edition.Id)
                 {
                     throw new InvalidOperationException("The replacement file has no matching edition assignment.");

@@ -30,7 +30,11 @@ namespace NzbDrone.Core.Movies.Collections
 
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, MovieCollection collection, List<string> properties)
         {
-            if (!properties.Contains(nameof(MovieCollection.QualityProfileId))) return;
+            if (!properties.Contains(nameof(MovieCollection.QualityProfileId)))
+            {
+                return;
+            }
+
             connection.Execute(@"UPDATE ""Collections"" SET ""QualityProfileId"" = ""QualityProfileId"" WHERE ""Id"" = @Id", new { collection.Id }, transaction);
             var stored = connection.QuerySingle<int>(@"SELECT ""QualityProfileId"" FROM ""Collections"" WHERE ""Id"" = @Id", new { collection.Id }, transaction);
             if (stored != collection.QualityProfileId)

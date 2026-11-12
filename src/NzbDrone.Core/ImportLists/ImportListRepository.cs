@@ -29,7 +29,11 @@ namespace NzbDrone.Core.ImportLists
 
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, ImportListDefinition list, List<string> properties)
         {
-            if (!properties.Contains(nameof(ImportListDefinition.QualityProfileId))) return;
+            if (!properties.Contains(nameof(ImportListDefinition.QualityProfileId)))
+            {
+                return;
+            }
+
             connection.Execute(@"UPDATE ""ImportLists"" SET ""QualityProfileId"" = ""QualityProfileId"" WHERE ""Id"" = @Id", new { list.Id }, transaction);
             var stored = connection.QuerySingle<int>(@"SELECT ""QualityProfileId"" FROM ""ImportLists"" WHERE ""Id"" = @Id", new { list.Id }, transaction);
             if (stored != list.QualityProfileId)

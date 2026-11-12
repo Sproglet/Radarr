@@ -74,6 +74,7 @@ namespace NzbDrone.Core.Download
                 : _downloadClientProvider.GetDownloadClient(remoteMovie.Release.DownloadProtocol, remoteMovie.Release.IndexerId, filterBlockedClients, tags);
 
             var grabbed = await DownloadReport(remoteMovie, downloadClient, snapshot);
+
             // Client submission is complete. Release before notifications/scripts, which may call the API.
             acquisition.Dispose();
             _eventAggregator.PublishEvent(grabbed);

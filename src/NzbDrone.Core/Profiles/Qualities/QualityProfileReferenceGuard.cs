@@ -11,8 +11,11 @@ namespace NzbDrone.Core.Profiles.Qualities
             // SQLite's enclosing write transaction serializes deletion. PostgreSQL needs
             // a key-share lock held until the referencing write commits, as with a foreign key.
             var profileLock = databaseType == DatabaseType.PostgreSQL ? " FOR KEY SHARE" : "";
-            var found = connection.QuerySingleOrDefault<int?>($@"SELECT ""Id"" FROM ""QualityProfiles""
-                WHERE ""Id"" = @ProfileId{profileLock}", new { ProfileId = profileId }, transaction);
+            var found = connection.QuerySingleOrDefault<int?>(
+                $@"SELECT ""Id"" FROM ""QualityProfiles""
+                WHERE ""Id"" = @ProfileId{profileLock}",
+                new { ProfileId = profileId },
+                transaction);
             if (!found.HasValue)
             {
                 throw new ModelNotFoundException(typeof(QualityProfile), profileId);

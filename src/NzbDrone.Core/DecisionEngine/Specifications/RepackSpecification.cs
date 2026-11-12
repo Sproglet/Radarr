@@ -38,7 +38,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return DownloadSpecDecision.Accept();
             }
 
-            if ((subject.EditionContext != null ? subject.CurrentFile != null : subject.Movie.MovieFileId != 0))
+            if (subject.EditionContext != null ? subject.CurrentFile != null : subject.Movie.MovieFileId != 0)
             {
                 var file = subject.CurrentFile;
 

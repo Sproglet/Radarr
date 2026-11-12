@@ -103,7 +103,12 @@ namespace NzbDrone.Core.Movies
                     return invalid;
                 }
 
-                return Classify(proposal.MovieId, releaseTitle, evidence.Label, evidence.Presentation, null,
+                return Classify(
+                    proposal.MovieId,
+                    releaseTitle,
+                    evidence.Label,
+                    evidence.Presentation,
+                    null,
                     editions.Select(e => e.Id == proposal.Id ? proposal : e).ToList());
             }
             catch (RegexMatchTimeoutException)
@@ -113,8 +118,13 @@ namespace NzbDrone.Core.Movies
             }
         }
 
-        private static EditionClassification Classify(int movieId, string releaseTitle, string parsedLabel, string presentationEvidence,
-            int? explicitEditionId, List<MovieEdition> editions)
+        private static EditionClassification Classify(
+            int movieId,
+            string releaseTitle,
+            string parsedLabel,
+            string presentationEvidence,
+            int? explicitEditionId,
+            List<MovieEdition> editions)
         {
             var result = new EditionClassification { ParsedLabel = parsedLabel };
             if (explicitEditionId.HasValue)
@@ -229,8 +239,11 @@ namespace NzbDrone.Core.Movies
         {
             result.CandidateEditionIds = candidates.Select(e => e.Id).OrderBy(id => id).ToList();
             result.RuleRevision = candidates.Count == 1 ? candidates[0].RuleRevision : null;
-            return Finish(result, candidates.Count == 1 ? EditionClassificationStatus.Matched :
-                candidates.Count == 0 ? EditionClassificationStatus.Unconfigured : EditionClassificationStatus.Ambiguous, reason);
+            return Finish(
+                result,
+                candidates.Count == 1 ? EditionClassificationStatus.Matched :
+                candidates.Count == 0 ? EditionClassificationStatus.Unconfigured : EditionClassificationStatus.Ambiguous,
+                reason);
         }
 
         private static EditionClassification Finish(EditionClassification result, EditionClassificationStatus status, string reason)

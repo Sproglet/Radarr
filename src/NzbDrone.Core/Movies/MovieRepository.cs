@@ -60,8 +60,11 @@ namespace NzbDrone.Core.Movies
             movie.MovieFileId = stored.MovieFileId;
             if (movie.MovieFile?.Id != movie.MovieFileId)
             {
-                movie.MovieFile = connection.QuerySingleOrDefault<MovieFile>(@"SELECT * FROM ""MovieFiles""
-                    WHERE ""Id"" = @MovieFileId AND ""MovieId"" = @Id", movie, transaction);
+                movie.MovieFile = connection.QuerySingleOrDefault<MovieFile>(
+                    @"SELECT * FROM ""MovieFiles""
+                    WHERE ""Id"" = @MovieFileId AND ""MovieId"" = @Id",
+                    movie,
+                    transaction);
             }
         }
 
@@ -81,23 +84,32 @@ namespace NzbDrone.Core.Movies
             movie.MovieFileId = stored.MovieFileId;
             if (movie.MovieFile?.Id != movie.MovieFileId)
             {
-                movie.MovieFile = connection.QuerySingleOrDefault<MovieFile>(@"SELECT * FROM ""MovieFiles""
-                    WHERE ""Id"" = @MovieFileId AND ""MovieId"" = @Id", movie, transaction);
+                movie.MovieFile = connection.QuerySingleOrDefault<MovieFile>(
+                    @"SELECT * FROM ""MovieFiles""
+                    WHERE ""Id"" = @MovieFileId AND ""MovieId"" = @Id",
+                    movie,
+                    transaction);
             }
 
             if (properties.Contains(nameof(Movie.QualityProfileId)) &&
                 (movie.QualityProfileId != stored.QualityProfileId || properties.Count == 1))
             {
                 QualityProfileReferenceGuard.Lock(connection, transaction, _database.DatabaseType, movie.QualityProfileId);
-                connection.Execute(@"UPDATE ""MovieEditions"" SET ""QualityProfileId"" = @QualityProfileId
-                    WHERE ""Id"" = @PrimaryEditionId AND ""MovieId"" = @Id", movie, transaction);
+                connection.Execute(
+                    @"UPDATE ""MovieEditions"" SET ""QualityProfileId"" = @QualityProfileId
+                    WHERE ""Id"" = @PrimaryEditionId AND ""MovieId"" = @Id",
+                    movie,
+                    transaction);
             }
 
             if (properties.Contains(nameof(Movie.LastSearchTime)) &&
                 (movie.LastSearchTime != stored.LastSearchTime || properties.Count == 1))
             {
-                connection.Execute(@"UPDATE ""MovieEditions"" SET ""LastSearchTime"" = @LastSearchTime
-                    WHERE ""Id"" = @PrimaryEditionId AND ""MovieId"" = @Id", movie, transaction);
+                connection.Execute(
+                    @"UPDATE ""MovieEditions"" SET ""LastSearchTime"" = @LastSearchTime
+                    WHERE ""Id"" = @PrimaryEditionId AND ""MovieId"" = @Id",
+                    movie,
+                    transaction);
             }
         }
 

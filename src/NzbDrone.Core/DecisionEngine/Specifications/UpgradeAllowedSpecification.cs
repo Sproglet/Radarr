@@ -27,7 +27,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         {
             var qualityProfile = subject.EffectiveQualityProfile;
 
-            if ((subject.EditionContext != null ? subject.CurrentFile != null : subject.Movie.MovieFileId != 0))
+            if (subject.EditionContext != null ? subject.CurrentFile != null : subject.Movie.MovieFileId != 0)
             {
                 var file = subject.CurrentFile;
 

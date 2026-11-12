@@ -12,6 +12,7 @@ namespace NzbDrone.Core.Movies
             var quality = databaseType == DatabaseType.SQLite
                 ? $"JSON_EXTRACT(\"{fileTable}\".\"Quality\", '$.quality')"
                 : $"CAST(\"{fileTable}\".\"Quality\"::json->>'quality' AS INTEGER)";
+
             // Aliases are fixed by callers; only typed integer IDs enter the predicate.
             var clauses = profiles.SelectMany(profile => profile.QualityIds.Select(id =>
                 $"(\"{profileTable}\".\"QualityProfileId\" = {profile.ProfileId} AND {quality} = {id})")).ToList();

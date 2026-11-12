@@ -34,6 +34,7 @@ namespace NzbDrone.Core.MediaFiles
             foreach (var file in _files.GetFilesByMovie(movie.Id))
             {
                 var storedPath = Path.Combine(movie.Path, file.RelativePath);
+
                 // Shared basenames also collide for file-specific subtitles and metadata.
                 if (!string.Equals(Path.ChangeExtension(storedPath, null), Path.ChangeExtension(destination, null), StringComparison.OrdinalIgnoreCase))
                 {

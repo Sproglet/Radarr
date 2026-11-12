@@ -1,5 +1,5 @@
-using System.Linq;
 using System.Collections.Generic;
+using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.DecisionEngine;
@@ -47,6 +47,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Specifications
                     clientId.HasValue && int.TryParse(h.Data.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID), out var recorded) && recorded == clientId)
                     .OrderByDescending(h => h.Date).ThenByDescending(h => h.Id).ToList();
             }
+
             var lastImported = movieImportedHistory.FirstOrDefault(h =>
                 h.DownloadId == downloadClientItem.DownloadId &&
                 h.EventType == MovieHistoryEventType.DownloadFolderImported);

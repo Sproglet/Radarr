@@ -243,6 +243,7 @@ namespace NzbDrone.Core.History
             {
                 history.Data[MovieHistory.DOWNLOAD_CLIENT_ID] = message.DownloadClientInfo.Id.ToString();
             }
+
             history.Data.Add("DownloadClientName", message.DownloadClientInfo?.Name);
             history.Data.Add("ReleaseGroup", message.MovieInfo.ReleaseGroup);
             history.Data.Add("CustomFormatScore", message.MovieInfo.CustomFormatScore.ToString());
@@ -350,6 +351,7 @@ namespace NzbDrone.Core.History
             {
                 history.Data["movieEditionName"] = message.MovieEditionName ?? message.TrackedDownload?.RemoteMovie?.EditionContext?.Edition.Name;
             }
+
             history.Data.Add("DownloadClientName", message.DownloadClientInfo.Name);
             history.Data.Add("Message", message.Message);
             history.Data.Add("ReleaseGroup", message.TrackedDownload?.RemoteMovie?.ParsedMovieInfo?.ReleaseGroup);
@@ -390,6 +392,7 @@ namespace NzbDrone.Core.History
                 history.Data["movieEditionName"] = message.MovieEditionName ?? message.Data.GetValueOrDefault("movieEditionName") ??
                     message.TrackedDownload?.RemoteMovie?.EditionContext?.Edition.Name;
             }
+
             history.Data.Add("DownloadClientName", message.TrackedDownload?.DownloadItem.DownloadClientInfo.Name ?? message.Data.GetValueOrDefault("downloadClientName"));
             history.Data.Add("Message", message.Message);
             history.Data.Add("ReleaseGroup", message.TrackedDownload?.RemoteMovie?.ParsedMovieInfo?.ReleaseGroup ?? message.Data.GetValueOrDefault(MovieHistory.RELEASE_GROUP));
