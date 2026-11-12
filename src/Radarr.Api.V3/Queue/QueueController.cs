@@ -141,7 +141,6 @@ namespace Radarr.Api.V3.Queue
                 }
             }
 
-
             return TypedResults.Ok<object>(new { });
         }
 

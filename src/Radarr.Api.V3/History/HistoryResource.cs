@@ -40,8 +40,11 @@ namespace Radarr.Api.V3.History
 
     public static class HistoryResourceMapper
     {
-        public static HistoryResource ToResource(this MovieHistory model, ICustomFormatCalculationService formatCalculator,
-            IMovieEditionContextService editionContexts, IUpgradableSpecification upgradableSpecification)
+        public static HistoryResource ToResource(
+            this MovieHistory model,
+            ICustomFormatCalculationService formatCalculator,
+            IMovieEditionContextService editionContexts,
+            IUpgradableSpecification upgradableSpecification)
         {
             if (model == null)
             {

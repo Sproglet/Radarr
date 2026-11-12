@@ -82,6 +82,7 @@ namespace Radarr.Api.V3.Parse
                 }
 
                 _aggregationService.Augment(remoteMovie);
+
                 // Parser previews carry title evidence only. Never reuse a release's
                 // assignment or authorize a download while testing its formats.
                 var preview = new RemoteMovie
