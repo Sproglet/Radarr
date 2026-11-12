@@ -32,6 +32,13 @@ namespace NzbDrone.Core.Datastore.Migration.Framework
         {
             var sw = Stopwatch.StartNew();
 
+            if (databaseType == DatabaseType.PostgreSQL)
+            {
+                // Historical timestamp-without-time-zone columns contain UTC values.
+                // Keep casts in earlier migrations independent of server/session defaults.
+                connectionString = new NpgsqlConnectionStringBuilder(connectionString) { Timezone = "UTC" }.ConnectionString;
+            }
+
             _logger.Info("*** Migrating {0} ***", GetLoggableConnectionString(connectionString, databaseType));
 
             var db = databaseType switch
