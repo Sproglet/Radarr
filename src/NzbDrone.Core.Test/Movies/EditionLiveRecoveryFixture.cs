@@ -631,8 +631,12 @@ namespace NzbDrone.Core.Test.MovieTests
             var grab = _downloads.GetLatestGrab(9, "synthetic-shared");
             var history = Mocker.Resolve<HistoryRepository>();
             var record = history.FindByDownloadId(grab.DownloadId).Single();
-            record.EditionRuleRevision = conflictingRevision;
-            history.Update(record);
+            // Seed pre-existing corruption directly; ordinary repository updates reject this change.
+            using (var connection = Db.OpenConnection())
+            {
+                connection.Execute(@"UPDATE ""History"" SET ""EditionRuleRevision"" = @Revision WHERE ""Id"" = @Id",
+                    new { record.Id, Revision = conflictingRevision });
+            }
             Mocker.Resolve<DownloadHistoryRepository>().Insert(new DownloadHistory
             {
                 MovieId = grab.MovieId, MovieEditionId = grab.MovieEditionId, EditionRuleRevision = grab.EditionRuleRevision,
@@ -945,16 +949,17 @@ namespace NzbDrone.Core.Test.MovieTests
         {
             Grab(_directors, "synthetic-directors");
             var original = _history.FindByDownloadId("synthetic-directors").Single();
+            using var connection = Db.OpenConnection();
             if (foreignClient)
             {
                 var grab = _downloads.GetLatestGrab("synthetic-directors");
-                grab.DownloadClientId = 10;
-                Mocker.Resolve<DownloadHistoryRepository>().Update(grab);
+                connection.Execute(@"UPDATE ""DownloadHistory"" SET ""DownloadClientId"" = 10 WHERE ""Id"" = @Id", grab);
             }
             else
             {
                 original.Data.Remove(MovieHistory.DOWNLOAD_CLIENT_ID);
-                Mocker.Resolve<HistoryRepository>().Update(original);
+                connection.Execute(@"UPDATE ""History"" SET ""Data"" = @Data WHERE ""Id"" = @Id",
+                    new { original.Id, Data = Newtonsoft.Json.JsonConvert.SerializeObject(original.Data) });
             }
 
             var failure = CaptureFailure(() => Mocker.Resolve<FailedDownloadService>().MarkAsFailed(original.Id));

@@ -706,6 +706,16 @@ Integrated official `Radarr/Radarr:develop` through `2f64b5cf6c4e183d395dc889b4b
 - This closes the movie-history-only deletion hole, not the remaining acquisition contract. Durable pre-submission intent, unique operation identity, immutable persisted grab updates, atomic history-stream persistence, public target removal, crash/write-failure reconciliation and broader concurrency/performance tests remain incomplete. **Automatic multi-edition acquisition, edition retries and custom import scripts remain gated.** No production data was accessed and nothing was pushed.
 
 
+## Immutable saved grab context (12 November 2026)
+
+- Ordinary repository updates can no longer move a typed grab to another movie/edition, clear its assignment/revision, rewrite its client/download identity, event kind, source evidence, timestamp or saved edition name. Single, bulk and partial writes share the guard; a rejected batch rolls back earlier valid changes. Unrelated metadata enrichment remains supported. Timestamp comparison uses microseconds to account for PostgreSQL storage precision.
+- Updates that turn an unassigned legacy row into a typed grab validate the effective movie/edition membership under the parent lock. Existing unassigned legacy behavior remains available. Recovery fixtures seed historical corruption directly instead of weakening these write restrictions.
+- **276 focused tests passed on each of SQLite and PostgreSQL, zero failures**, including **108 new mutation/enrichment/ownership/atomicity cases**. The initial runs exposed two older fixture mutation paths, now corrected; the final runs passed. The preceding full suites passed 4,818 tests per engine before this change; they are not represented as a full-suite run of the new writer guard.
+- The full Linux application dependency build passed with SDK analyzers/StyleCop enabled and zero warnings/errors. Disposable real-application checks passed again on both engines: two combined editions and subtitles survive scan/rename/restarts and independent upgrades; history-only malformed settlement remains blocked and repairs only its saved client/target.
+- Artifacts: `edition-grab-immutable-{build-final,analyzers}.log`, `edition-grab-immutable-final-{sqlite,postgres}.trx`/logs and `edition-grab-immutable-runtime-{sqlite,postgres}-results.log` under `_temp/edition-test-results/`. No production configuration/media/client was accessed and nothing was pushed.
+- Durable pre-submission intent, unique operation identity, atomic history-stream persistence, public target removal, crash/write-failure reconciliation and broader concurrency/performance gates remain open. **Automatic multi-edition acquisition, edition retries and custom import scripts remain gated.**
+
+
 ---
 
 # Historical Phase 2 report (10 September 2026)

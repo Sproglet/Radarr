@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using Dapper;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
@@ -40,6 +41,34 @@ namespace NzbDrone.Core.History
             if (history.EventType == MovieHistoryEventType.Grabbed)
             {
                 MovieEditionGrabGuard.LockAndValidate(connection, transaction, history.MovieId, history.MovieEditionId);
+            }
+        }
+
+        protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, MovieHistory history, List<string> properties)
+        {
+            var stored = connection.QuerySingle<MovieHistory>(@"SELECT * FROM ""History"" WHERE ""Id"" = @Id", history, transaction);
+            if (stored.EventType == MovieHistoryEventType.Grabbed && stored.MovieEditionId.HasValue)
+            {
+                MovieEditionGrabGuard.ValidateSnapshot(
+                    properties,
+                    (nameof(MovieHistory.MovieId), stored.MovieId, history.MovieId),
+                    (nameof(MovieHistory.MovieEditionId), stored.MovieEditionId, history.MovieEditionId),
+                    (nameof(MovieHistory.EditionRuleRevision), stored.EditionRuleRevision, history.EditionRuleRevision),
+                    (nameof(MovieHistory.DownloadId), stored.DownloadId, history.DownloadId),
+                    (nameof(MovieHistory.SourceTitle), stored.SourceTitle, history.SourceTitle),
+                    (nameof(MovieHistory.Date), MovieEditionGrabGuard.TimestampMicroseconds(stored.Date), MovieEditionGrabGuard.TimestampMicroseconds(history.Date)),
+                    (nameof(MovieHistory.EventType), stored.EventType, history.EventType),
+                    (nameof(MovieHistory.Data), stored.Data?.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID), history.Data?.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID)),
+                    (nameof(MovieHistory.Data), stored.Data?.GetValueOrDefault("movieEditionName"), history.Data?.GetValueOrDefault("movieEditionName")));
+                return;
+            }
+
+            var eventType = properties.Contains(nameof(MovieHistory.EventType)) ? history.EventType : stored.EventType;
+            if (eventType == MovieHistoryEventType.Grabbed)
+            {
+                var movieId = properties.Contains(nameof(MovieHistory.MovieId)) ? history.MovieId : stored.MovieId;
+                var editionId = properties.Contains(nameof(MovieHistory.MovieEditionId)) ? history.MovieEditionId : stored.MovieEditionId;
+                MovieEditionGrabGuard.LockAndValidate(connection, transaction, movieId, editionId);
             }
         }
 
