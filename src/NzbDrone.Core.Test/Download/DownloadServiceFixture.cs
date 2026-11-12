@@ -54,6 +54,16 @@ namespace NzbDrone.Core.Test.Download
 
         [TestCase(false)]
         [TestCase(true)]
+        public void unresolved_journal_blocks_legacy_client_selection_too(bool explicitClient)
+        {
+            Mocker.GetMock<IMovieEditionSubmissionRepository>().Setup(r => r.HasUnsettled(_parseResult.Movie.Id, null)).Returns(true);
+            Assert.ThrowsAsync<InvalidOperationException>(() => Subject.DownloadReport(_parseResult, explicitClient ? 41 : null));
+            Mocker.GetMock<IProvideDownloadClient>().Verify(p => p.Get(It.IsAny<int>()), Times.Never());
+            Mocker.GetMock<IProvideDownloadClient>().Verify(p => p.GetDownloadClient(It.IsAny<DownloadProtocol>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<HashSet<int>>()), Times.Never());
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void edition_or_failed_recovery_cannot_reach_download_client(bool recoveryFailure)
         {
             _parseResult.Release.Title = "Synthetic.Voyage.2026.1080p.BluRay-SyntheticGroup";

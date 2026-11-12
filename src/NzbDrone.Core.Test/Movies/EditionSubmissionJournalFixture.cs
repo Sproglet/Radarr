@@ -18,7 +18,7 @@ using NzbDrone.Core.Test.Framework;
 
 namespace NzbDrone.Core.Test.MovieTests
 {
-    public class EditionSubmissionJournalFixture : DbTest
+    public partial class EditionSubmissionJournalFixture : DbTest
     {
         private Movie _movie;
         private MovieEdition _edition;

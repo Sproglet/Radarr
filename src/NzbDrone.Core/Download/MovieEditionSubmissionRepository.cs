@@ -22,6 +22,8 @@ namespace NzbDrone.Core.Download
         MovieEditionSubmission Record(string operationId);
         MovieEditionSubmission RecordGrabs(string operationId);
         MovieEditionSubmission Settle(string operationId);
+        MovieEditionSubmission FindByOperationId(string operationId);
+        bool HasUnsettled(int movieId, int? editionId = null);
     }
 
     public class MovieEditionSubmissionRepository : BasicRepository<MovieEditionSubmission>, IMovieEditionSubmissionRepository
@@ -37,6 +39,16 @@ namespace NzbDrone.Core.Download
         }
 
         protected override bool RequiresLifecycleTransaction => true;
+
+        public MovieEditionSubmission FindByOperationId(string operationId) => Query(s => s.OperationId == operationId).SingleOrDefault();
+
+        public bool HasUnsettled(int movieId, int? editionId = null)
+        {
+            using var connection = _database.OpenConnection();
+            return connection.ExecuteScalar<bool>(@"SELECT EXISTS (SELECT 1 FROM ""MovieEditionSubmissions""
+                WHERE ""MovieId"" = @MovieId AND ""State"" <> 3 AND (@EditionId IS NULL OR ""MovieEditionId"" = @EditionId))",
+                new { MovieId = movieId, EditionId = editionId });
+        }
 
         public MovieEditionSubmission Prepare(MovieEditionSubmission submission)
         {

@@ -774,6 +774,17 @@ Integrated official `Radarr/Radarr:develop` through `2f64b5cf6c4e183d395dc889b4b
 - Artifacts: `edition-atomic-grabs-backup-{sqlite,postgres}-results.log` under `_temp/edition-test-results/`. These are same-version, quiescent backups using synthetic clients/media and disposable databases; concurrent/cross-version/external-client backup remains unverified. Automatic acquisition and retries remain disabled. Nothing was pushed.
 
 
+## Prepared-intent submission coordinator and ambiguity retention (12 November 2026)
+
+- Added an explicit coordinator primitive that commits intent before calling a chosen client, reloads the committed release/language/score snapshot, revalidates current movie/edition/file/client context and passes an independent request object. It retains the local acquisition lock through submission and durable acceptance/atomic history persistence. Known acceptance is saved before grab writes; reconciliation performs database work only.
+- Transport exceptions, missing client IDs and failure to save acceptance retain prepared uncertainty. A second same-target request is blocked rather than blindly resubmitted. Failure during history persistence retains accepted intent; explicit reconciliation repairs both streams without another client request. Different editions retain independent operations and the parent primary projection. This does not make external client IO and database writes one transaction.
+- The normal `DownloadService` now also blocks legacy fallback whenever unresolved movie intent exists, both before selection and after rate-limit waits. **Its edition-aware acquisition guard is unchanged and remains disabled.** The new coordinator is not connected as an acquisition bypass or automatic startup worker.
+- **317 focused tests plus one additional same-target race passed per database, zero failures**. These include **13 new coordinator/legacy-guard cases**: durable pre-IO observation, caller-mutation isolation, exception/empty-ID ambiguity, acceptance-write failure, second-stream failure/reconciliation, legacy-writer change before IO, independent editions, stale definition and one client call under concurrent same-target submission. Injected SQLite triggers/PostgreSQL constraints test real transactions.
+- Both-engine real application/API submission smoke tests passed: a legacy single-target release traverses the existing pipeline and sends only generated fake NZB data to a loopback synthetic SAB; multi-target/independently managed requests remain rejected before NZB/client IO, and restart preserves both media/subtitle pairs and saved intent. Full application/analyzer builds pass with zero warnings/errors. A new full Core run remains pending.
+- Evidence under `_temp/edition-test-results/`: `edition-coordinator-{sqlite,postgres}.trx`, `edition-coordinator-race-{sqlite,postgres}.trx`, build/analyzer logs and `edition-coordinator-runtime-{sqlite,postgres}-results.log`. All data/clients/configurations are disposable synthetic fixtures. Nothing was pushed.
+- Remaining gates include safe public acquisition integration, external operation tagging/unknown-outcome resolution, notification delivery/replay, automatic startup reconciliation/review controls, client configuration/profile-definition/cross-process leases and the other recorded real-client/crash/compatibility/security/performance work. **Automatic multi-edition acquisition, edition retries and custom import scripts remain gated.**
+
+
 ---
 
 # Historical Phase 2 report (10 September 2026)

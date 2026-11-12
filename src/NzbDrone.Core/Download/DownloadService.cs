@@ -33,6 +33,7 @@ namespace NzbDrone.Core.Download
         private readonly ISeedConfigProvider _seedConfigProvider;
         private readonly IMovieEditionRepository _editions;
         private readonly IMovieRepository _movies;
+        private readonly IMovieEditionSubmissionRepository _submissionJournal;
         private readonly Logger _logger;
 
         public DownloadService(IProvideDownloadClient downloadClientProvider,
@@ -44,6 +45,7 @@ namespace NzbDrone.Core.Download
                                ISeedConfigProvider seedConfigProvider,
                                IMovieEditionRepository editions,
                                IMovieRepository movies,
+                               IMovieEditionSubmissionRepository submissionJournal,
                                Logger logger)
         {
             _downloadClientProvider = downloadClientProvider;
@@ -55,6 +57,7 @@ namespace NzbDrone.Core.Download
             _seedConfigProvider = seedConfigProvider;
             _editions = editions;
             _movies = movies;
+            _submissionJournal = submissionJournal;
             _logger = logger;
         }
 
@@ -82,6 +85,11 @@ namespace NzbDrone.Core.Download
 
         private void ValidateAcquisition(RemoteMovie remoteMovie, AcquisitionSnapshot snapshot)
         {
+            if (_submissionJournal.HasUnsettled(snapshot.MovieId))
+            {
+                throw new InvalidOperationException("Unresolved edition submission intent requires review before another download can be submitted.");
+            }
+
             if (!snapshot.Matches(_movies.Find(snapshot.MovieId)) || !snapshot.Matches(remoteMovie.Movie))
             {
                 throw new InvalidOperationException("The movie changed after release evaluation. Refresh the release before submitting it.");
