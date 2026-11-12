@@ -86,6 +86,10 @@ namespace NzbDrone.Core.Movies
                     (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = m.""PrimaryEditionId"")",
                 transaction: transaction);
             references += connection.ExecuteScalar<int>(
+                @"SELECT COUNT(*) FROM ""MovieEditionSubmissions"" s WHERE s.""State"" <> 3
+                    AND NOT EXISTS (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = s.""MovieEditionId"" AND e.""MovieId"" = s.""MovieId"")",
+                transaction: transaction);
+            references += connection.ExecuteScalar<int>(
                 @"SELECT COUNT(*) FROM ""MovieFiles"" f
                 WHERE f.""MovieEditionId"" IS NOT NULL AND NOT EXISTS
                     (SELECT 1 FROM ""MovieEditions"" e WHERE e.""Id"" = f.""MovieEditionId"")",

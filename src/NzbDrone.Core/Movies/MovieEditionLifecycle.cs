@@ -1,5 +1,6 @@
 using System.Data;
 using Dapper;
+using NzbDrone.Core.Datastore;
 
 namespace NzbDrone.Core.Movies
 {
@@ -51,6 +52,15 @@ namespace NzbDrone.Core.Movies
 
         public static void RemoveOrphanedEditions(IDbConnection connection, IDbTransaction transaction)
         {
+            var unresolvedMovie = connection.QueryFirstOrDefault<int?>(
+                @"SELECT s.""MovieId"" FROM ""MovieEditionSubmissions"" s WHERE s.""State"" <> 3
+                    AND NOT EXISTS (SELECT 1 FROM ""Movies"" m WHERE m.""Id"" = s.""MovieId"") LIMIT 1",
+                transaction: transaction);
+            if (unresolvedMovie.HasValue)
+            {
+                throw new ModelConflictException(typeof(Movie), unresolvedMovie.Value, "has unresolved edition submission intent; review it before removing the movie.");
+            }
+
             connection.Execute(
                 @"DELETE FROM ""MovieEditions"" WHERE NOT EXISTS
                 (SELECT 1 FROM ""Movies"" m WHERE m.""Id"" = ""MovieEditions"".""MovieId"")",

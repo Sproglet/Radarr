@@ -173,6 +173,7 @@ namespace NzbDrone.Core.Datastore
             Mapper.Entity<CustomFilter>("CustomFilters").RegisterModel();
 
             Mapper.Entity<DownloadHistory>("DownloadHistory").RegisterModel();
+            Mapper.Entity<MovieEditionSubmission>("MovieEditionSubmissions").RegisterModel();
 
             Mapper.Entity<UpdateHistory>("UpdateHistory").RegisterModel();
 
