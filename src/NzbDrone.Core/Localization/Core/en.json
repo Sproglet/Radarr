@@ -2157,7 +2157,7 @@
     "EditionParserSelectionHelp": "Choose an edition to preview its profile. This does not assign or download a release.",
     "EditionParserTargetsError": "Unable to load edition choices. Try reopening this preview.",
   "EditionSubmissionReview": "Submission review",
-  "EditionSubmissionReviewHelp": "Unknown client outcomes require review before another release can be submitted.",
+  "EditionSubmissionReviewHelp": "Shows unresolved submissions and the 100 most recent settled submissions. Unknown client outcomes require review before another release can be submitted.",
   "EditionSubmissionPrepared": "Outcome unknown",
   "EditionSubmissionAccepted": "History needs repair",
   "EditionSubmissionRecorded": "History recorded",

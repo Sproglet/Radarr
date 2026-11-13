@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const { chromium } = require('../../_temp/edition-browser-tools/node_modules/playwright-core');
 const mode = process.argv[2];
 assert.ok(['prepared', 'accepted'].includes(mode));
+const finishedHistory = process.argv[3] === '--finished-history';
+assert.ok(process.argv.length === 3 || (process.argv.length === 4 && finishedHistory));
 const root = 'http://127.0.0.1:17878';
 
 (async () => {
@@ -19,6 +21,7 @@ const root = 'http://127.0.0.1:17878';
   try {
     await page.goto(root + '/movie/-1000001');
     await page.getByRole('heading', { name: 'Submission review', exact: true }).waitFor();
+    if (finishedHistory) assert.equal(await page.getByText('Settled', { exact: true }).count(), 100);
     const repair = page.getByRole('button', { name: 'Repair saved history', exact: true });
     if (mode === 'prepared') {
       await page.getByText('Outcome unknown', { exact: true }).waitFor();

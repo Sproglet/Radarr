@@ -1,7 +1,7 @@
 """Verify durable intent retention using disposable configuration and synthetic media.
 
-Run in the isolated SDK runner; optional --postgres. Intent is seeded offline
-because automatic acquisition and public journal/submission endpoints stay gated.
+Run in the isolated SDK runner; optional --postgres/--browser/--finished-history.
+Intent is seeded offline because automatic acquisition and submission stay gated.
 Repository preparation and evidence transitions are covered by database fixtures.
 """
 
@@ -18,7 +18,7 @@ p = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(p)
 
 
-def run(postgres, browser=False):
+def run(postgres, browser=False, finished_history=False):
     if postgres:
         p.DATABASE.enable_postgres()
     p.run()
@@ -44,18 +44,32 @@ def run(postgres, browser=False):
             ("00000000-0000-4000-8000-000000000041", movie["Id"], edition["Id"], edition["RuleRevision"], edition["Name"], attributes,
              edition["QualityProfileId"], edition["MovieFileId"], movie["Path"], 41, "Synthetic Client", json.dumps(release), '{}',
              "2026-11-12T12:00:00Z", "2026-11-12T12:00:00Z"))
+        if finished_history:
+            for index in range(1, 106):
+                db.execute('''INSERT INTO "MovieEditionSubmissions" ("OperationId","MovieId","MovieEditionId","EditionRuleRevision",
+                    "EditionName","EditionAttributes","QualityProfileId","MovieFileId","MoviePath","DownloadClientId","DownloadClientName",
+                    "Release","ParsedMovieInfo","DownloadId","State","CreatedAt","UpdatedAt")
+                    SELECT ?,"MovieId","MovieEditionId","EditionRuleRevision","EditionName","EditionAttributes","QualityProfileId","MovieFileId",
+                    "MoviePath","DownloadClientId","DownloadClientName","Release","ParsedMovieInfo",?,3,?,?
+                    FROM "MovieEditionSubmissions" WHERE "OperationId"=?''',
+                    ("10000000-0000-4000-8000-" + format(index, "012x"), "synthetic-finished-" + str(index),
+                     "2026-11-13T12:00:00Z", "2026-11-13T12:00:00Z", "00000000-0000-4000-8000-000000000041"))
     saved = p.rows("MovieEditionSubmissions")
     for restart in range(2):
         p.start()
         p.command("Housekeeping")
         assert p.rows("MovieEditionSubmissions") == saved and p.snapshot() == media
         summary = p.api("api/v3/movieedition/submission?movieId=1")
-        assert len(summary) == 1 and summary[0]["operationId"] == saved[0]["OperationId"]
+        assert len(summary) == (101 if finished_history else 1) and summary[0]["operationId"] == saved[0]["OperationId"]
+        if finished_history:
+            assert all(row["state"] == "settled" for row in summary[1:])
+            assert {row["operationId"] for row in summary[1:]} == {
+                row["OperationId"] for row in saved[-100:]}
         assert not summary[0]["canReconcile"] and "unknown" in summary[0]["message"].lower()
         exposed = json.dumps(summary).lower()
         assert "synthetic-secret" not in exposed and "historydata" not in exposed and "downloadurl" not in exposed and movie["Path"].lower() not in exposed
         if browser and restart == 0:
-            subprocess.run(["node", "/src/docs/development/verify-edition-journal-browser.cjs", "prepared"], check=True)
+            subprocess.run(["node", "/src/docs/development/verify-edition-journal-browser.cjs", "prepared"] + (["--finished-history"] if finished_history else []), check=True)
         for delete_files in (False, True):
             try:
                 p.api("api/v3/movie/1?deleteFiles=" + str(delete_files).lower(), method="DELETE")
@@ -101,7 +115,7 @@ def run(postgres, browser=False):
             raise AssertionError("Stale/foreign reconciliation was accepted")
     assert not any(row.get("EditionOperationId") == operation for row in p.rows("History"))
     if browser:
-        subprocess.run(["node", "/src/docs/development/verify-edition-journal-browser.cjs", "accepted"], check=True)
+        subprocess.run(["node", "/src/docs/development/verify-edition-journal-browser.cjs", "accepted"] + (["--finished-history"] if finished_history else []), check=True)
         result = p.api("api/v3/movieedition/submission?movieId=1")[0]
     else:
         result = p.api(endpoint, expected)
@@ -132,8 +146,8 @@ def run(postgres, browser=False):
 
 if __name__ == "__main__":
     try:
-        if any(arg not in {"--postgres", "--browser"} for arg in sys.argv[1:]) or len(set(sys.argv[1:])) != len(sys.argv[1:]):
-            raise ValueError("Only --postgres and --browser are supported")
-        run("--postgres" in sys.argv[1:], "--browser" in sys.argv[1:])
+        if any(arg not in {"--postgres", "--browser", "--finished-history"} for arg in sys.argv[1:]) or len(set(sys.argv[1:])) != len(sys.argv[1:]):
+            raise ValueError("Only --postgres, --browser and --finished-history are supported")
+        run("--postgres" in sys.argv[1:], "--browser" in sys.argv[1:], "--finished-history" in sys.argv[1:])
     finally:
         p.cleanup()

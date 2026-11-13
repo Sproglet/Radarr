@@ -54,7 +54,10 @@ namespace NzbDrone.Core.Download
             using var connection = _database.OpenConnection();
             return connection.Query<MovieEditionSubmission>(
                 @"SELECT * FROM ""MovieEditionSubmissions"" WHERE ""MovieId"" = @MovieId
-                ORDER BY ""CreatedAt"" DESC, ""Id"" DESC LIMIT 100",
+                  AND (""State"" <> 3 OR ""Id"" IN
+                    (SELECT ""Id"" FROM ""MovieEditionSubmissions"" WHERE ""MovieId"" = @MovieId AND ""State"" = 3
+                     ORDER BY ""CreatedAt"" DESC, ""Id"" DESC LIMIT 100))
+                ORDER BY CASE WHEN ""State"" = 3 THEN 1 ELSE 0 END, ""CreatedAt"" DESC, ""Id"" DESC",
                 new { MovieId = movieId }).ToList();
         }
 
