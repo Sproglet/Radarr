@@ -21,6 +21,9 @@ import EditEditionDefinitionModal, {
   DefinitionSelection,
 } from './EditEditionDefinitionModal';
 import EditionSubmissionsTable from './EditionSubmissionsTable';
+import RemoveUnusedEditionModal, {
+  RemovalSelection,
+} from './RemoveUnusedEditionModal';
 import SelectPrimaryEditionModal, {
   PrimarySelection,
 } from './SelectPrimaryEditionModal';
@@ -124,6 +127,23 @@ function PrimaryEditionButton({
   );
 }
 
+function RemoveEditionButton({
+  edition,
+  isDisabled,
+  onSelect,
+}: {
+  edition: MovieEdition;
+  isDisabled: boolean;
+  onSelect(edition: MovieEdition): void;
+}) {
+  const onPress = useCallback(() => onSelect(edition), [edition, onSelect]);
+  return (
+    <Button isDisabled={isDisabled} onPress={onPress}>
+      {translate('RemoveUnusedEdition')}
+    </Button>
+  );
+}
+
 function MovieEditionsTable({
   movieId,
   qualityProfileId,
@@ -137,6 +157,7 @@ function MovieEditionsTable({
   const [monitoringSelection, setMonitoringSelection] =
     useState<MonitoringSelection>();
   const [profileSelection, setProfileSelection] = useState<ProfileSelection>();
+  const [removalSelection, setRemovalSelection] = useState<RemovalSelection>();
   const [definitionSelection, setDefinitionSelection] =
     useState<DefinitionSelection>();
   const [selectionError, setSelectionError] = useState<string>();
@@ -169,6 +190,7 @@ function MovieEditionsTable({
       setMonitoringSelection(undefined);
       setProfileSelection(undefined);
       setDefinitionSelection(undefined);
+      setRemovalSelection(undefined);
       setSelectionError(message);
       onCreated();
     },
@@ -229,6 +251,26 @@ function MovieEditionsTable({
     },
     [data]
   );
+  const onRemovalPress = useCallback(
+    (target: MovieEdition) => {
+      const primary = data?.find((edition) => edition.isPrimary);
+      if (primary) {
+        setSelectionError(undefined);
+        setRemovalSelection({
+          target,
+          movieMonitored: monitored,
+          expectedPrimaryEditionId: primary.id,
+        });
+      }
+    },
+    [data, monitored]
+  );
+  const onRemovalClose = useCallback(() => setRemovalSelection(undefined), []);
+  const onRemoved = useCallback(() => {
+    setRemovalSelection(undefined);
+    setSelectionError(undefined);
+    onCreated();
+  }, [onCreated]);
 
   return (
     <>
@@ -306,6 +348,20 @@ function MovieEditionsTable({
                       onSelect={onPrimaryPress}
                     />
                   )}
+                  {!edition.isPrimary &&
+                  !edition.monitored &&
+                  !edition.movieFileId &&
+                  edition.state === 'missing' ? (
+                    <RemoveEditionButton
+                      edition={edition}
+                      isDisabled={
+                        isFetching ||
+                        !!error ||
+                        !data.some((target) => target.isPrimary)
+                      }
+                      onSelect={onRemovalPress}
+                    />
+                  ) : null}
                 </TableRowCell>
               </TableRow>
             ))}
@@ -318,6 +374,7 @@ function MovieEditionsTable({
       <p>{translate('PrimaryEditionHelpText')}</p>
       <p>{translate('EditionMonitoringHelpText')}</p>
       <p>{translate('AddEditionHelpText')}</p>
+      <p>{translate('RemoveUnusedEditionHelpText')}</p>
       <Button isDisabled={!data || !!error} onPress={onAdd}>
         {translate('AddEdition')}
       </Button>
@@ -329,6 +386,13 @@ function MovieEditionsTable({
         onClose={onPrimaryClose}
       />
       <EditionSubmissionsTable movieId={movieId} />
+      <RemoveUnusedEditionModal
+        movieId={movieId}
+        selection={removalSelection}
+        onRemoved={onRemoved}
+        onError={onActionError}
+        onClose={onRemovalClose}
+      />
       <SetEditionMonitoringModal
         movieId={movieId}
         selection={monitoringSelection}

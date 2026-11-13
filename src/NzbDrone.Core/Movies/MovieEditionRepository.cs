@@ -18,6 +18,7 @@ namespace NzbDrone.Core.Movies
         void SetPrimaryEdition(int movieId, int editionId);
         void SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId);
         MovieEdition SetMonitoring(MovieEditionMonitoringChange change);
+        void RemoveUnused(MovieEditionRemovalChange change);
         MovieEdition SetQualityProfile(MovieEditionQualityProfileChange change);
         MovieEdition SetDefinition(MovieEditionDefinitionChange change, MovieEdition proposed, Movie expectedMovie, List<MovieEdition> expectedEditions);
         void SetCurrentFile(int movieId, int editionId, int fileId, int? expectedFileId);
@@ -306,6 +307,55 @@ namespace NzbDrone.Core.Movies
                 (current.MatchRules ?? new()).SequenceEqual(expected.MatchRules ?? new()) &&
                 (current.Attributes ?? new()).Count == (expected.Attributes ?? new()).Count &&
                 (current.Attributes ?? new()).All(a => (expected.Attributes ?? new()).TryGetValue(a.Key, out var value) && value == a.Value);
+        }
+
+        public void RemoveUnused(MovieEditionRemovalChange change)
+        {
+            if (change == null || change.MovieId <= 0 || change.EditionId <= 0 || change.ExpectedPrimaryEditionId <= 0 ||
+                change.ExpectedQualityProfileId <= 0 || change.ExpectedRuleRevision <= 0 || string.IsNullOrWhiteSpace(change.ExpectedName))
+            {
+                throw new ArgumentException("Provide a movie, edition and complete expected removal state.");
+            }
+
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            if (MovieEditionGrabGuard.LockParent(connection, transaction, change.MovieId) != 1)
+            {
+                throw new ModelNotFoundException(typeof(Movie), change.MovieId);
+            }
+
+            var parent = connection.QuerySingle<Movie>(@"SELECT * FROM ""Movies"" WHERE ""Id"" = @MovieId", change, transaction);
+            var target = connection.QuerySingleOrDefault<MovieEdition>(@"SELECT * FROM ""MovieEditions"" WHERE ""Id"" = @EditionId", change, transaction)
+                ?? throw new ModelNotFoundException(typeof(MovieEdition), change.EditionId);
+            if (target.MovieId != change.MovieId || parent.PrimaryEditionId != change.ExpectedPrimaryEditionId ||
+                parent.Monitored != change.ExpectedMovieMonitored || target.Monitored != change.ExpectedEditionMonitored ||
+                target.MovieFileId != change.ExpectedMovieFileId || target.QualityProfileId != change.ExpectedQualityProfileId ||
+                target.RuleRevision != change.ExpectedRuleRevision || target.Name != change.ExpectedName)
+            {
+                throw new InvalidOperationException("The movie or edition settings changed. Reload before removing an edition.");
+            }
+
+            if (target.Id == parent.PrimaryEditionId || target.Monitored || target.MovieFileId.HasValue)
+            {
+                throw new InvalidOperationException("Only an empty, unmonitored secondary edition can be removed.");
+            }
+
+            var referenced = connection.ExecuteScalar<bool>(
+                @"SELECT EXISTS (SELECT 1 FROM ""Movies"" WHERE ""PrimaryEditionId"" = @EditionId)
+                    OR EXISTS (SELECT 1 FROM ""MovieFiles"" WHERE ""MovieEditionId"" = @EditionId)
+                    OR EXISTS (SELECT 1 FROM ""PendingReleases"" WHERE ""MovieEditionId"" = @EditionId)
+                    OR EXISTS (SELECT 1 FROM ""MovieEditionSubmissions"" WHERE ""MovieEditionId"" = @EditionId)
+                    OR EXISTS (SELECT 1 FROM ""History"" WHERE ""MovieEditionId"" = @EditionId)
+                    OR EXISTS (SELECT 1 FROM ""DownloadHistory"" WHERE ""MovieEditionId"" = @EditionId)",
+                change,
+                transaction);
+            if (referenced)
+            {
+                throw new InvalidOperationException("This edition has saved files, work or history. Review its references before removal.");
+            }
+
+            connection.Execute(@"DELETE FROM ""MovieEditions"" WHERE ""Id"" = @EditionId AND ""MovieId"" = @MovieId", change, transaction);
+            transaction.Commit();
         }
 
         public MovieEdition SetMonitoring(MovieEditionMonitoringChange change)

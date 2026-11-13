@@ -68,6 +68,30 @@ namespace Radarr.Api.V3.MovieEditions
             }
         }
 
+        [HttpPost("{id:int}/remove")]
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public Results<Ok<object>, Conflict<object>> RemoveUnused(int id, [FromBody] MovieEditionRemovalResource request)
+        {
+            try
+            {
+                _management.RemoveUnused(request?.ToChange(id));
+                return TypedResults.Ok<object>(new { id, movieId = request.MovieId });
+            }
+            catch (ArgumentException ex)
+            {
+                throw new BadRequestException(ex.Message);
+            }
+            catch (ModelNotFoundException ex)
+            {
+                throw new NotFoundException(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return TypedResults.Conflict<object>(new { message = ex.Message });
+            }
+        }
+
         [HttpPost("{id:int}/monitoring")]
         [Consumes("application/json")]
         [Produces("application/json")]

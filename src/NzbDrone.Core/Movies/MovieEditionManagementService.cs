@@ -14,6 +14,7 @@ namespace NzbDrone.Core.Movies
         MovieEdition Create(MovieEdition proposal);
         MovieEdition SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId);
         MovieEdition SetMonitoring(MovieEditionMonitoringChange change);
+        void RemoveUnused(MovieEditionRemovalChange change);
         MovieEdition SetQualityProfile(MovieEditionQualityProfileChange change);
         MovieEditionNamingPreview PreviewDefinition(MovieEditionDefinitionChange change);
         MovieEdition SetDefinition(MovieEditionDefinitionChange change);
@@ -108,6 +109,24 @@ namespace NzbDrone.Core.Movies
             var edition = preview.ProposedEdition;
             edition.EditionKey = "custom-" + Guid.NewGuid().ToString("N");
             return _editions.CreateUnmonitored(edition, movie, expected);
+        }
+
+        public void RemoveUnused(MovieEditionRemovalChange change)
+        {
+            if (change == null || change.MovieId <= 0 || change.EditionId <= 0)
+            {
+                throw new ArgumentException("Provide a positive movie and edition ID.");
+            }
+
+            Movie movie;
+            using (MovieEditionAcquisitionGate.Acquire(change.MovieId))
+            using (MovieFileOperationLock.Acquire(change.MovieId))
+            {
+                _editions.RemoveUnused(change);
+                movie = _movies.Get(change.MovieId);
+            }
+
+            _events.PublishEvent(new MovieUpdatedEvent(movie));
         }
 
         public MovieEdition SetMonitoring(MovieEditionMonitoringChange change)

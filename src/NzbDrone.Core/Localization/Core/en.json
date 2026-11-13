@@ -2165,5 +2165,9 @@
   "RepairEditionSubmission": "Repair saved history",
   "RepairEditionSubmissionConfirm": "Repair the saved history for {edition} using the recorded client outcome. No download request will be sent.",
   "EditionSubmissionRepairFailed": "Unable to reconcile the saved submission. Reload and review its state.",
-  "EditionSubmissionLoadFailed": "Unable to load saved submission state."
+  "EditionSubmissionLoadFailed": "Unable to load saved submission state.",
+  "RemoveUnusedEdition": "Remove unused edition",
+  "RemoveUnusedEditionConfirm": "Remove the unused edition '{edition}' from this movie?",
+  "RemoveUnusedEditionHelpText": "Only empty, unmonitored secondary editions without saved work or history can be removed.",
+  "EditionRemovalFailed": "Unable to remove the unused edition."
 }
