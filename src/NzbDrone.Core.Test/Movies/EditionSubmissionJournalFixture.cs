@@ -241,7 +241,7 @@ namespace NzbDrone.Core.Test.MovieTests
         [Test]
         public void matching_settlement_releases_target_but_retains_durable_evidence(
             [Values(DownloadHistoryEventType.DownloadImported, DownloadHistoryEventType.DownloadFailed, DownloadHistoryEventType.DownloadIgnored)] DownloadHistoryEventType eventType,
-            [Values("matching", "operation", "revision", "client", "download", "target", "movie")] string evidence)
+            [Values("matching", "operation", "revision", "client", "download", "target", "movie", "name", "missing-name", "older", "equal")] string evidence)
         {
             var intent = _journal.Prepare(Intent());
             intent = _journal.Accept(intent.OperationId, "synthetic-download");
@@ -251,7 +251,8 @@ namespace NzbDrone.Core.Test.MovieTests
             {
                 MovieId = intent.MovieId, MovieEditionId = intent.MovieEditionId, EditionRuleRevision = intent.EditionRuleRevision,
                 EditionOperationId = intent.OperationId, DownloadClientId = intent.DownloadClientId, DownloadId = intent.DownloadId,
-                SourceTitle = intent.Release.Title, Date = DateTime.UtcNow.AddSeconds(1), EventType = eventType
+                SourceTitle = intent.Release.Title, Date = DateTime.UtcNow.AddSeconds(1), EventType = eventType,
+                Data = new() { { "movieEditionName", intent.EditionName } }
             };
             switch (evidence)
             {
@@ -261,6 +262,10 @@ namespace NzbDrone.Core.Test.MovieTests
                 case "download": terminal.DownloadId += "-other"; break;
                 case "target": terminal.MovieEditionId++; break;
                 case "movie": terminal.MovieId++; break;
+                case "name": terminal.Data["movieEditionName"] = "Synthetic Other Edition"; break;
+                case "missing-name": terminal.Data.Clear(); break;
+                case "older": terminal.Date = intent.CreatedAt.AddDays(-1); break;
+                case "equal": terminal.Date = Mocker.Resolve<DownloadHistoryRepository>().All().Single().Date; break;
             }
             Mocker.Resolve<DownloadHistoryRepository>().Insert(terminal);
             Action settle = () => _journal.Settle(intent.OperationId);

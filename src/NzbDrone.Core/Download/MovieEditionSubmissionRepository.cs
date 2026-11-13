@@ -205,11 +205,57 @@ namespace NzbDrone.Core.Download
             submission.State = MovieEditionSubmissionState.Recorded;
             submission.UpdatedAt = DateTime.UtcNow;
             connection.Execute(@"UPDATE ""MovieEditionSubmissions"" SET ""State"" = @State, ""UpdatedAt"" = @UpdatedAt WHERE ""Id"" = @Id", submission, transaction);
+            submission = TrySettle(connection, transaction, operationId) ?? submission;
             transaction.Commit();
             return submission;
         }
 
         public MovieEditionSubmission Settle(string operationId) => Transition(operationId, MovieEditionSubmissionState.Settled);
+
+        internal static MovieEditionSubmission TrySettle(IDbConnection connection, IDbTransaction transaction, string operationId)
+        {
+            if (operationId == null || !MovieEditionOperationIdentity.IsValid(operationId) || connection.Execute(
+                @"UPDATE ""MovieEditionSubmissions"" SET ""State"" = ""State"" WHERE ""OperationId"" = @OperationId",
+                new { OperationId = operationId },
+                transaction) != 1)
+            {
+                return null;
+            }
+
+            var submission = LockSubmission(connection, transaction, operationId);
+            if (submission.State != MovieEditionSubmissionState.Recorded || !HasMatchingTerminal(connection, transaction, submission))
+            {
+                return null;
+            }
+
+            submission.State = MovieEditionSubmissionState.Settled;
+            submission.UpdatedAt = DateTime.UtcNow;
+            connection.Execute(@"UPDATE ""MovieEditionSubmissions"" SET ""State"" = @State, ""UpdatedAt"" = @UpdatedAt WHERE ""Id"" = @Id", submission, transaction);
+            return submission;
+        }
+
+        private static bool HasMatchingTerminal(IDbConnection connection, IDbTransaction transaction, MovieEditionSubmission submission)
+        {
+            if (!TryGetGrabDate(connection, transaction, "History", submission, true, out var movieGrabDate) ||
+                !TryGetGrabDate(connection, transaction, "DownloadHistory", submission, false, out var downloadGrabDate))
+            {
+                return false;
+            }
+
+            var terminals = connection.Query<DownloadHistory>(
+                @"SELECT * FROM ""DownloadHistory"" WHERE ""EditionOperationId"" = @OperationId AND ""EventType"" IN (2,3,4)",
+                submission,
+                transaction).ToList();
+
+            // A client may rename a job, so its terminal title need not equal the release title.
+            // Shared operation identity, original target/name/client and ordering must still agree.
+            return terminals.Count > 0 && terminals.All(terminal => terminal.MovieId == submission.MovieId &&
+                terminal.MovieEditionId == submission.MovieEditionId && terminal.EditionRuleRevision == submission.EditionRuleRevision &&
+                terminal.DownloadClientId == submission.DownloadClientId && terminal.DownloadId == submission.DownloadId &&
+                terminal.Data?.GetValueOrDefault("movieEditionName") == submission.EditionName &&
+                MovieEditionGrabGuard.TimestampMicroseconds(terminal.Date) > MovieEditionGrabGuard.TimestampMicroseconds(movieGrabDate) &&
+                MovieEditionGrabGuard.TimestampMicroseconds(terminal.Date) > MovieEditionGrabGuard.TimestampMicroseconds(downloadGrabDate));
+        }
 
         private MovieEditionSubmission Transition(string operationId, MovieEditionSubmissionState next, string downloadId = null)
         {
@@ -239,12 +285,7 @@ namespace NzbDrone.Core.Download
                 RequireGrab(connection, transaction, "DownloadHistory", submission, false);
             }
 
-            if (next == MovieEditionSubmissionState.Settled && connection.ExecuteScalar<int>(
-                @"SELECT COUNT(*) FROM ""DownloadHistory"" WHERE ""EditionOperationId"" = @OperationId AND ""MovieId"" = @MovieId
-                    AND ""MovieEditionId"" = @MovieEditionId AND ""EditionRuleRevision"" = @EditionRuleRevision
-                    AND ""DownloadClientId"" = @DownloadClientId AND ""DownloadId"" = @DownloadId AND ""EventType"" IN (2,3,4)",
-                submission,
-                transaction) == 0)
+            if (next == MovieEditionSubmissionState.Settled && !HasMatchingTerminal(connection, transaction, submission))
             {
                 throw new InvalidOperationException("Submission settlement requires matching terminal evidence.");
             }
@@ -306,11 +347,21 @@ namespace NzbDrone.Core.Download
 
         private static void RequireGrab(IDbConnection connection, IDbTransaction transaction, string table, MovieEditionSubmission submission, bool movieHistory)
         {
+            if (!TryGetGrabDate(connection, transaction, table, submission, movieHistory, out _))
+            {
+                throw new InvalidOperationException("Recording submission requires both matching durable grab streams.");
+            }
+        }
+
+        private static bool TryGetGrabDate(IDbConnection connection, IDbTransaction transaction, string table, MovieEditionSubmission submission, bool movieHistory, out DateTime date)
+        {
             var sql = $@"SELECT * FROM ""{table}"" WHERE ""EditionOperationId"" = @OperationId AND ""EventType"" = 1";
+            date = default;
             bool matches;
             if (movieHistory)
             {
                 var grab = connection.QuerySingleOrDefault<MovieHistory>(sql, submission, transaction);
+                date = grab?.Date ?? default;
                 matches = grab != null && grab.MovieId == submission.MovieId && grab.MovieEditionId == submission.MovieEditionId &&
                     grab.EditionRuleRevision == submission.EditionRuleRevision && grab.DownloadId == submission.DownloadId &&
                     grab.SourceTitle == submission.Release.Title && grab.Data?.GetValueOrDefault("movieEditionName") == submission.EditionName &&
@@ -319,16 +370,14 @@ namespace NzbDrone.Core.Download
             else
             {
                 var grab = connection.QuerySingleOrDefault<DownloadHistory>(sql, submission, transaction);
+                date = grab?.Date ?? default;
                 matches = grab != null && grab.MovieId == submission.MovieId && grab.MovieEditionId == submission.MovieEditionId &&
                     grab.EditionRuleRevision == submission.EditionRuleRevision && grab.DownloadId == submission.DownloadId &&
                     grab.SourceTitle == submission.Release.Title && grab.Data?.GetValueOrDefault("movieEditionName") == submission.EditionName &&
                     grab.DownloadClientId == submission.DownloadClientId;
             }
 
-            if (!matches)
-            {
-                throw new InvalidOperationException("Recording submission requires both matching durable grab streams.");
-            }
+            return matches;
         }
     }
 }

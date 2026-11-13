@@ -30,6 +30,11 @@ namespace NzbDrone.Core.Download.History
             {
                 MovieEditionGrabGuard.LockAndValidate(connection, transaction, history.MovieId, history.MovieEditionId, history.EditionOperationId);
             }
+            else if (history.EventType is DownloadHistoryEventType.DownloadImported or DownloadHistoryEventType.DownloadFailed or DownloadHistoryEventType.DownloadIgnored)
+            {
+                // The terminal event and proven settlement share the repository transaction.
+                MovieEditionSubmissionRepository.TrySettle(connection, transaction, history.EditionOperationId);
+            }
         }
 
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, DownloadHistory history, List<string> properties)
