@@ -20,6 +20,7 @@ import AddEditionModal from './AddEditionModal';
 import EditEditionDefinitionModal, {
   DefinitionSelection,
 } from './EditEditionDefinitionModal';
+import EditionSubmissionsTable from './EditionSubmissionsTable';
 import SelectPrimaryEditionModal, {
   PrimarySelection,
 } from './SelectPrimaryEditionModal';
@@ -327,6 +328,7 @@ function MovieEditionsTable({
         onError={onActionError}
         onClose={onPrimaryClose}
       />
+      <EditionSubmissionsTable movieId={movieId} />
       <SetEditionMonitoringModal
         movieId={movieId}
         selection={monitoringSelection}

@@ -2155,5 +2155,15 @@
     "EditionSampleAmbiguityHelpText": "Make the matching rules exclusive, or choose an edition explicitly during manual import.",
     "EditionParserContext": "Edition context",
     "EditionParserSelectionHelp": "Choose an edition to preview its profile. This does not assign or download a release.",
-    "EditionParserTargetsError": "Unable to load edition choices. Try reopening this preview."
+    "EditionParserTargetsError": "Unable to load edition choices. Try reopening this preview.",
+  "EditionSubmissionReview": "Submission review",
+  "EditionSubmissionReviewHelp": "Unknown client outcomes require review before another release can be submitted.",
+  "EditionSubmissionPrepared": "Outcome unknown",
+  "EditionSubmissionAccepted": "History needs repair",
+  "EditionSubmissionRecorded": "History recorded",
+  "EditionSubmissionSettled": "Settled",
+  "RepairEditionSubmission": "Repair saved history",
+  "RepairEditionSubmissionConfirm": "Repair the saved history for {edition} using the recorded client outcome. No download request will be sent.",
+  "EditionSubmissionRepairFailed": "Unable to reconcile the saved submission. Reload and review its state.",
+  "EditionSubmissionLoadFailed": "Unable to load saved submission state."
 }

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Dapper;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download.History;
 using NzbDrone.Core.History;
@@ -24,10 +25,16 @@ namespace NzbDrone.Core.Download
         MovieEditionSubmission Settle(string operationId);
         MovieEditionSubmission FindByOperationId(string operationId);
         bool HasUnsettled(int movieId, int? editionId = null);
+        List<MovieEditionSubmission> RecentForMovie(int movieId);
     }
 
     public class MovieEditionSubmissionRepository : BasicRepository<MovieEditionSubmission>, IMovieEditionSubmissionRepository
     {
+        private static readonly JsonSerializerOptions ReleaseComparisonOptions = new()
+        {
+            Converters = { new STJUtcConverter() }
+        };
+
         private readonly HistoryRepository _history;
         private readonly DownloadHistoryRepository _downloads;
 
@@ -41,6 +48,15 @@ namespace NzbDrone.Core.Download
         protected override bool RequiresLifecycleTransaction => true;
 
         public MovieEditionSubmission FindByOperationId(string operationId) => Query(s => s.OperationId == operationId).SingleOrDefault();
+
+        public List<MovieEditionSubmission> RecentForMovie(int movieId)
+        {
+            using var connection = _database.OpenConnection();
+            return connection.Query<MovieEditionSubmission>(
+                @"SELECT * FROM ""MovieEditionSubmissions"" WHERE ""MovieId"" = @MovieId
+                ORDER BY ""CreatedAt"" DESC, ""Id"" DESC LIMIT 100",
+                new { MovieId = movieId }).ToList();
+        }
 
         public bool HasUnsettled(int movieId, int? editionId = null)
         {
@@ -277,8 +293,8 @@ namespace NzbDrone.Core.Download
 
         private static bool SameRelease(ReleaseInfo stored, ReleaseInfo expected)
         {
-            var left = JsonSerializer.SerializeToNode((object)stored)?.AsObject();
-            var right = JsonSerializer.SerializeToNode((object)expected)?.AsObject();
+            var left = JsonSerializer.SerializeToNode((object)stored, ReleaseComparisonOptions)?.AsObject();
+            var right = JsonSerializer.SerializeToNode((object)expected, ReleaseComparisonOptions)?.AsObject();
             foreach (var name in new[] { nameof(ReleaseInfo.Age), nameof(ReleaseInfo.AgeHours), nameof(ReleaseInfo.AgeMinutes) })
             {
                 left?.Remove(name);

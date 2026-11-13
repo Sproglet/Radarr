@@ -520,5 +520,28 @@ namespace NzbDrone.Core.Test.MovieTests
             Mocker.Resolve<HistoryRepository>().Count().Should().Be(0);
             Mocker.Resolve<DownloadHistoryRepository>().Count().Should().Be(1);
         }
+
+        [Test]
+        public void replay_compares_release_timestamps_at_datastore_precision()
+        {
+            var request = Intent();
+            request.Release.PublishDate = new DateTime(2026, 11, 12, 1, 2, 3, DateTimeKind.Unspecified).AddTicks(12345);
+            var intent = _journal.Prepare(request);
+            using (var connection = Db.OpenConnection())
+            {
+                // A restored older payload can contain a timestamp not yet normalized by its converter.
+                connection.Execute(@"UPDATE ""MovieEditionSubmissions"" SET ""Release"" = @Release WHERE ""Id"" = @Id",
+                    new { intent.Id, Release = JsonSerializerForTest(request.Release) });
+            }
+            _journal.Accept(intent.OperationId, "synthetic-download");
+            _journal.RecordGrabs(intent.OperationId);
+            var original = Mocker.Resolve<DownloadHistoryRepository>().All().Single().Id;
+
+            _journal.RecordGrabs(intent.OperationId);
+
+            Mocker.Resolve<DownloadHistoryRepository>().All().Should().ContainSingle().Which.Id.Should().Be(original);
+        }
+
+        private static string JsonSerializerForTest(ReleaseInfo release) => System.Text.Json.JsonSerializer.Serialize(release);
     }
 }
