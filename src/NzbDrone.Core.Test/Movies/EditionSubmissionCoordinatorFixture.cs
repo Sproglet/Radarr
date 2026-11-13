@@ -7,6 +7,7 @@ using Dapper;
 using FluentAssertions;
 using Moq;
 using NUnit.Framework;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.History;
@@ -21,13 +22,14 @@ namespace NzbDrone.Core.Test.MovieTests
 {
     public partial class EditionSubmissionJournalFixture
     {
-        private MovieEditionSubmissionService Coordinator()
+        private MovieEditionSubmissionService Coordinator(IMovieEditionSubmissionRepository journal = null)
         {
-            Mocker.SetConstant<IMovieEditionSubmissionRepository>(_journal);
+            Mocker.SetConstant<IMovieEditionSubmissionRepository>(journal ?? _journal);
             Mocker.SetConstant<IMovieRepository>(Mocker.Resolve<MovieRepository>());
             Mocker.SetConstant<IMovieEditionRepository>(Mocker.Resolve<MovieEditionRepository>());
             Mocker.SetConstant<IQualityProfileRepository>(Mocker.Resolve<QualityProfileRepository>());
             Mocker.SetConstant<IMediaFileRepository>(Mocker.Resolve<MediaFileRepository>());
+            Mocker.SetConstant<ICustomFormatRepository>(Mocker.Resolve<CustomFormatRepository>());
             return Mocker.Resolve<MovieEditionSubmissionService>();
         }
 
@@ -38,7 +40,7 @@ namespace NzbDrone.Core.Test.MovieTests
             {
                 Movie = _movie, Release = intent.Release, ParsedMovieInfo = intent.ParsedMovieInfo,
                 Languages = new() { NzbDrone.Core.Languages.Language.English }, CustomFormatScore = 77,
-                EditionContext = new MovieEditionContext(edition ?? _edition, null, null, true)
+                EditionContext = new MovieEditionContext(edition ?? _edition, Mocker.Resolve<QualityProfileRepository>().Get((edition ?? _edition).QualityProfileId), null, true)
             };
         }
 
@@ -188,7 +190,7 @@ namespace NzbDrone.Core.Test.MovieTests
                 return actualMovies.Get(_movie.Id);
             });
             var service = new MovieEditionSubmissionService(_journal, changingMovies.Object, Mocker.Resolve<MovieEditionRepository>(),
-                Mocker.Resolve<QualityProfileRepository>(), Mocker.Resolve<MediaFileRepository>());
+                Mocker.Resolve<QualityProfileRepository>(), Mocker.Resolve<MediaFileRepository>(), Mocker.Resolve<CustomFormatRepository>());
             Func<Task> send = () => service.Submit(SubmissionRelease(), client.Object, null);
 
             await send.Should().ThrowAsync<InvalidOperationException>().WithMessage("*before client IO*");

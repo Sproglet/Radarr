@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using NzbDrone.Common.Serializer;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Indexers;
@@ -26,19 +28,22 @@ namespace NzbDrone.Core.Download
         private readonly IMovieEditionRepository _editions;
         private readonly IQualityProfileRepository _profiles;
         private readonly IMediaFileRepository _files;
+        private readonly ICustomFormatRepository _customFormats;
 
         public MovieEditionSubmissionService(
             IMovieEditionSubmissionRepository journal,
             IMovieRepository movies,
             IMovieEditionRepository editions,
             IQualityProfileRepository profiles,
-            IMediaFileRepository files)
+            IMediaFileRepository files,
+            ICustomFormatRepository customFormats)
         {
             _journal = journal;
             _movies = movies;
             _editions = editions;
             _profiles = profiles;
             _files = files;
+            _customFormats = customFormats;
         }
 
         public async Task<MovieEditionSubmission> Submit(RemoteMovie remote, IDownloadClient client, IIndexer indexer)
@@ -51,12 +56,21 @@ namespace NzbDrone.Core.Download
 
             var movieId = remote.Movie.Id;
             var target = remote.EditionContext.Edition;
+            if (remote.EditionContext.QualityProfile == null || remote.EditionContext.QualityProfile.Id <= 0 ||
+                remote.EditionContext.QualityProfile.Id != target.QualityProfileId)
+            {
+                throw new InvalidOperationException("Submission requires the selected edition's evaluated profile before client IO.");
+            }
+
+            // Capture values before the first await; caller/cache objects can change while waiting.
+            var expectedProfile = remote.EditionContext.QualityProfile.ToJson();
             using var acquisition = await MovieEditionAcquisitionGate.AcquireAsync(movieId);
             if (_journal.HasUnsettled(movieId, target.Id))
             {
                 throw new ModelConflictException(typeof(MovieEdition), target.Id, "has unresolved submission intent; reconcile it before submitting again.");
             }
 
+            ValidateProfile(CurrentProfile(target.QualityProfileId), expectedProfile);
             var parentProfile = remote.Movie.QualityProfileId;
             var parentPrimary = remote.Movie.PrimaryEditionId;
             var parentFile = remote.Movie.MovieFileId;
@@ -91,13 +105,14 @@ namespace NzbDrone.Core.Download
                 throw new InvalidOperationException("Submission context changed before client IO; retain prepared intent for review.");
             }
 
-            var profile = _profiles.Get(prepared.QualityProfileId);
             var file = prepared.MovieFileId.HasValue ? _files.Get(prepared.MovieFileId.Value) : null;
             if (file != null && (file.MovieId != movieId || file.MovieEditionId != edition.Id))
             {
                 throw new InvalidOperationException("Current-file ownership changed before client IO.");
             }
 
+            var profile = CurrentProfile(prepared.QualityProfileId);
+            ValidateProfile(profile, expectedProfile);
             var frozen = new RemoteMovie
             {
                 Movie = movie, Release = prepared.Release, ParsedMovieInfo = prepared.ParsedMovieInfo,
@@ -110,6 +125,36 @@ namespace NzbDrone.Core.Download
             var downloadId = await client.Download(frozen, indexer);
             _journal.Accept(prepared.OperationId, downloadId);
             return _journal.RecordGrabs(prepared.OperationId);
+        }
+
+        private QualityProfile CurrentProfile(int id)
+        {
+            try
+            {
+                var profile = _profiles.GetStoredDefinition(id);
+                var ids = profile.FormatItems.Select(item => item.Format.Id).Distinct().ToList();
+
+                // Resolve every stored reference directly, including formats absent from the cache.
+                var formats = _customFormats.Get(ids).ToDictionary(format => format.Id);
+                foreach (var item in profile.FormatItems)
+                {
+                    item.Format = formats[item.Format.Id];
+                }
+
+                return profile;
+            }
+            catch (Exception ex) when (ex is ModelNotFoundException || ex is ApplicationException)
+            {
+                throw new InvalidOperationException("The selected profile or custom format changed before client IO. Re-evaluate the release.", ex);
+            }
+        }
+
+        private static void ValidateProfile(QualityProfile profile, string expected)
+        {
+            if (profile.ToJson() != expected)
+            {
+                throw new InvalidOperationException("The selected profile or custom format changed before client IO. Re-evaluate the release.");
+            }
         }
 
         public MovieEditionSubmission Reconcile(string operationId)

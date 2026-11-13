@@ -11,6 +11,7 @@ namespace NzbDrone.Core.Profiles.Qualities
     public interface IQualityProfileRepository : IBasicRepository<QualityProfile>
     {
         bool Exists(int id);
+        QualityProfile GetStoredDefinition(int id);
     }
 
     public class QualityProfileRepository : BasicRepository<QualityProfile>, IQualityProfileRepository
@@ -85,6 +86,14 @@ namespace NzbDrone.Core.Profiles.Qualities
             }
 
             return profiles;
+        }
+
+        // Return stored format references without filtering them through the custom-format cache.
+        public QualityProfile GetStoredDefinition(int id)
+        {
+            using var connection = _database.OpenConnection();
+            return connection.QuerySingleOrDefault<QualityProfile>(@"SELECT * FROM ""QualityProfiles"" WHERE ""Id"" = @Id", new { Id = id })
+                ?? throw new ModelNotFoundException(typeof(QualityProfile), id);
         }
 
         public bool Exists(int id)
