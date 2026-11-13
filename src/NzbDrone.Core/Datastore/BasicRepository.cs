@@ -217,6 +217,8 @@ namespace NzbDrone.Core.Datastore
                 throw new InvalidOperationException("Transactional insertion requires a new model and a transaction belonging to its connection.");
             }
 
+            OnInserting(connection, transaction, model);
+
             SqlBuilderExtensions.LogQuery(_insertSql, model);
 
             var multi = RetryStrategy.Execute(static (state, _) => state.connection.QueryMultiple(state._insertSql, state.model, state.transaction), (connection, _insertSql, model, transaction));
@@ -240,6 +242,8 @@ namespace NzbDrone.Core.Datastore
             {
                 using (var tran = conn.BeginTransaction(IsolationLevel.ReadCommitted))
                 {
+                    OnInsertingMany(conn, tran, models);
+
                     foreach (var model in models)
                     {
                         Insert(conn, tran, model);
@@ -471,6 +475,14 @@ namespace NzbDrone.Core.Datastore
                 connection.Execute(sql, parameters, transaction);
                 OnDeleted(connection, transaction);
             }
+        }
+
+        protected virtual void OnInserting(IDbConnection connection, IDbTransaction transaction, TModel model)
+        {
+        }
+
+        protected virtual void OnInsertingMany(IDbConnection connection, IDbTransaction transaction, IList<TModel> models)
+        {
         }
 
         protected virtual void OnInserted(IDbConnection connection, IDbTransaction transaction, TModel model)

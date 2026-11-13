@@ -24,13 +24,34 @@ namespace NzbDrone.Core.Download.History
 
         protected override bool RequiresLifecycleTransaction => true;
 
-        protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, DownloadHistory history)
+        protected override void OnInsertingMany(IDbConnection connection, IDbTransaction transaction, IList<DownloadHistory> histories)
+        {
+            MovieEditionGrabGuard.LockParents(
+                connection,
+                transaction,
+                histories.Where(NeedsParentLock).Select(h => h.MovieId));
+        }
+
+        private static bool NeedsParentLock(DownloadHistory history) => (history.MovieEditionId.HasValue || history.EditionOperationId != null) &&
+            history.EventType is DownloadHistoryEventType.DownloadGrabbed or DownloadHistoryEventType.DownloadImported or
+                DownloadHistoryEventType.DownloadFailed or DownloadHistoryEventType.DownloadIgnored;
+
+        protected override void OnInserting(IDbConnection connection, IDbTransaction transaction, DownloadHistory history)
         {
             if (history.EventType == DownloadHistoryEventType.DownloadGrabbed)
             {
                 MovieEditionGrabGuard.LockAndValidate(connection, transaction, history.MovieId, history.MovieEditionId, history.EditionOperationId);
             }
-            else if (history.EventType is DownloadHistoryEventType.DownloadImported or DownloadHistoryEventType.DownloadFailed or DownloadHistoryEventType.DownloadIgnored)
+            else if (NeedsParentLock(history))
+            {
+                // Historical terminal snapshots may outlive their edition. Serialize on an existing parent without retargeting them.
+                MovieEditionGrabGuard.LockParent(connection, transaction, history.MovieId);
+            }
+        }
+
+        protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, DownloadHistory history)
+        {
+            if (history.EventType is DownloadHistoryEventType.DownloadImported or DownloadHistoryEventType.DownloadFailed or DownloadHistoryEventType.DownloadIgnored)
             {
                 // The terminal event and proven settlement share the repository transaction.
                 MovieEditionSubmissionRepository.TrySettle(connection, transaction, history.EditionOperationId);

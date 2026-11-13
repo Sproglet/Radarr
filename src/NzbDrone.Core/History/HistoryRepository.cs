@@ -36,7 +36,15 @@ namespace NzbDrone.Core.History
 
         protected override bool RequiresLifecycleTransaction => true;
 
-        protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, MovieHistory history)
+        protected override void OnInsertingMany(IDbConnection connection, IDbTransaction transaction, IList<MovieHistory> histories)
+        {
+            MovieEditionGrabGuard.LockParents(
+                connection,
+                transaction,
+                histories.Where(h => h.EventType == MovieHistoryEventType.Grabbed && h.MovieEditionId.HasValue).Select(h => h.MovieId));
+        }
+
+        protected override void OnInserting(IDbConnection connection, IDbTransaction transaction, MovieHistory history)
         {
             if (history.EventType == MovieHistoryEventType.Grabbed)
             {

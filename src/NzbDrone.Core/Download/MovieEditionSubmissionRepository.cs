@@ -109,7 +109,12 @@ namespace NzbDrone.Core.Download
             };
         }
 
-        protected override void OnInserted(IDbConnection connection, IDbTransaction transaction, MovieEditionSubmission submission)
+        protected override void OnInsertingMany(IDbConnection connection, IDbTransaction transaction, IList<MovieEditionSubmission> submissions)
+        {
+            MovieEditionGrabGuard.LockParents(connection, transaction, submissions.Select(s => s.MovieId));
+        }
+
+        protected override void OnInserting(IDbConnection connection, IDbTransaction transaction, MovieEditionSubmission submission)
         {
             if (submission.OperationId == null || !MovieEditionOperationIdentity.IsValid(submission.OperationId) ||
                 submission.State != MovieEditionSubmissionState.Prepared || submission.DownloadId != null ||
@@ -169,6 +174,18 @@ namespace NzbDrone.Core.Download
         {
             using var connection = _database.OpenConnection();
             using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+
+            // Start with a write: SQLite cannot safely upgrade a stale read snapshot under concurrent repair.
+            var parent = connection.Execute(
+                @"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" =
+                    (SELECT ""MovieId"" FROM ""MovieEditionSubmissions"" WHERE ""OperationId"" = @OperationId)",
+                new { OperationId = operationId },
+                transaction);
+            if (parent != 1)
+            {
+                throw new InvalidOperationException("Unknown submission operation or missing movie; review the saved intent.");
+            }
+
             var submission = LockSubmission(connection, transaction, operationId);
             if (submission.State is not (MovieEditionSubmissionState.Accepted or MovieEditionSubmissionState.Recorded))
             {

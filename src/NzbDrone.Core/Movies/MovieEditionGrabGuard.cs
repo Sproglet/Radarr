@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Linq;
 using Dapper;
 
 namespace NzbDrone.Core.Movies
@@ -9,6 +10,19 @@ namespace NzbDrone.Core.Movies
     {
         // PostgreSQL stores microseconds; an unchanged in-memory grab can retain sub-microsecond ticks.
         public static long TimestampMicroseconds(DateTime date) => date.Ticks / 10;
+
+        public static int LockParent(IDbConnection connection, IDbTransaction transaction, int movieId) => connection.Execute(
+            @"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId",
+            new { MovieId = movieId },
+            transaction);
+
+        public static void LockParents(IDbConnection connection, IDbTransaction transaction, IEnumerable<int> movieIds)
+        {
+            foreach (var movieId in movieIds.Where(id => id > 0).Distinct().OrderBy(id => id))
+            {
+                LockParent(connection, transaction, movieId);
+            }
+        }
 
         public static void ValidateSnapshot(List<string> properties, params (string Property, object Stored, object Proposed)[] fields)
         {
@@ -33,10 +47,7 @@ namespace NzbDrone.Core.Movies
                 return;
             }
 
-            var parent = connection.Execute(
-                @"UPDATE ""Movies"" SET ""Monitored"" = ""Monitored"" WHERE ""Id"" = @MovieId",
-                new { MovieId = movieId },
-                transaction);
+            var parent = LockParent(connection, transaction, movieId);
             if (parent != 1 || connection.ExecuteScalar<int>(
                 @"SELECT COUNT(*) FROM ""MovieEditions"" WHERE ""Id"" = @EditionId AND ""MovieId"" = @MovieId",
                 new { MovieId = movieId, EditionId = editionId },
