@@ -15,6 +15,7 @@ namespace NzbDrone.Core.Movies
         MovieEdition SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId);
         MovieEdition SetMonitoring(MovieEditionMonitoringChange change);
         void RemoveUnused(MovieEditionRemovalChange change);
+        void RetireEmpty(MovieEditionRemovalChange change);
         MovieEdition SetQualityProfile(MovieEditionQualityProfileChange change);
         MovieEditionNamingPreview PreviewDefinition(MovieEditionDefinitionChange change);
         MovieEdition SetDefinition(MovieEditionDefinitionChange change);
@@ -111,7 +112,11 @@ namespace NzbDrone.Core.Movies
             return _editions.CreateUnmonitored(edition, movie, expected);
         }
 
-        public void RemoveUnused(MovieEditionRemovalChange change)
+        public void RemoveUnused(MovieEditionRemovalChange change) => RemoveEmpty(change, false);
+
+        public void RetireEmpty(MovieEditionRemovalChange change) => RemoveEmpty(change, true);
+
+        private void RemoveEmpty(MovieEditionRemovalChange change, bool preserveFileHistory)
         {
             if (change == null || change.MovieId <= 0 || change.EditionId <= 0)
             {
@@ -122,7 +127,15 @@ namespace NzbDrone.Core.Movies
             using (MovieEditionAcquisitionGate.Acquire(change.MovieId))
             using (MovieFileOperationLock.Acquire(change.MovieId))
             {
-                _editions.RemoveUnused(change);
+                if (preserveFileHistory)
+                {
+                    _editions.RetireEmpty(change);
+                }
+                else
+                {
+                    _editions.RemoveUnused(change);
+                }
+
                 movie = _movies.Get(change.MovieId);
             }
 

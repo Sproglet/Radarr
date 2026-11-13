@@ -11,7 +11,7 @@ using Radarr.Http.REST;
 
 namespace NzbDrone.Api.Test.v3.Movies
 {
-    public class EditionRemovalFixture
+    public partial class EditionRemovalFixture
     {
         private Mock<IMovieEditionManagementService> _management;
         private MovieEditionController _controller;

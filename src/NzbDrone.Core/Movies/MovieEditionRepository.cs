@@ -19,6 +19,7 @@ namespace NzbDrone.Core.Movies
         void SelectPrimary(int movieId, int editionId, int expectedPrimaryId, int? expectedFileId, int expectedProfileId);
         MovieEdition SetMonitoring(MovieEditionMonitoringChange change);
         void RemoveUnused(MovieEditionRemovalChange change);
+        void RetireEmpty(MovieEditionRemovalChange change);
         MovieEdition SetQualityProfile(MovieEditionQualityProfileChange change);
         MovieEdition SetDefinition(MovieEditionDefinitionChange change, MovieEdition proposed, Movie expectedMovie, List<MovieEdition> expectedEditions);
         void SetCurrentFile(int movieId, int editionId, int fileId, int? expectedFileId);
@@ -309,7 +310,11 @@ namespace NzbDrone.Core.Movies
                 (current.Attributes ?? new()).All(a => (expected.Attributes ?? new()).TryGetValue(a.Key, out var value) && value == a.Value);
         }
 
-        public void RemoveUnused(MovieEditionRemovalChange change)
+        public void RemoveUnused(MovieEditionRemovalChange change) => RemoveEmpty(change, false);
+
+        public void RetireEmpty(MovieEditionRemovalChange change) => RemoveEmpty(change, true);
+
+        private void RemoveEmpty(MovieEditionRemovalChange change, bool preserveFileHistory)
         {
             if (change == null || change.MovieId <= 0 || change.EditionId <= 0 || change.ExpectedPrimaryEditionId <= 0 ||
                 change.ExpectedQualityProfileId <= 0 || change.ExpectedRuleRevision <= 0 || string.IsNullOrWhiteSpace(change.ExpectedName))
@@ -345,7 +350,6 @@ namespace NzbDrone.Core.Movies
                     OR EXISTS (SELECT 1 FROM ""MovieFiles"" WHERE ""MovieEditionId"" = @EditionId)
                     OR EXISTS (SELECT 1 FROM ""PendingReleases"" WHERE ""MovieEditionId"" = @EditionId)
                     OR EXISTS (SELECT 1 FROM ""MovieEditionSubmissions"" WHERE ""MovieEditionId"" = @EditionId)
-                    OR EXISTS (SELECT 1 FROM ""History"" WHERE ""MovieEditionId"" = @EditionId)
                     OR EXISTS (SELECT 1 FROM ""DownloadHistory"" WHERE ""MovieEditionId"" = @EditionId)",
                 change,
                 transaction);
@@ -354,8 +358,44 @@ namespace NzbDrone.Core.Movies
                 throw new InvalidOperationException("This edition has saved files, work or history. Review its references before removal.");
             }
 
+            var hasHistory = connection.ExecuteScalar<bool>(@"SELECT EXISTS (SELECT 1 FROM ""History"" WHERE ""MovieEditionId"" = @EditionId)", change, transaction);
+            if (hasHistory)
+            {
+                if (!preserveFileHistory)
+                {
+                    throw new InvalidOperationException("This edition has saved files, work or history requiring review before removal.");
+                }
+
+                List<MovieHistory> history;
+                try
+                {
+                    history = connection.Query<MovieHistory>(@"SELECT * FROM ""History"" WHERE ""MovieEditionId"" = @EditionId", change, transaction).ToList();
+                }
+                catch (DataException)
+                {
+                    throw new InvalidOperationException("This edition has unreadable history requiring review before retirement.");
+                }
+
+                if (history.Any(row => !IsManualFileHistory(row, change.MovieId)))
+                {
+                    throw new InvalidOperationException("This edition has saved files, work or history requiring review before removal.");
+                }
+            }
+
+            // Historical IDs and saved names deliberately survive retirement. No files or history are deleted.
             connection.Execute(@"DELETE FROM ""MovieEditions"" WHERE ""Id"" = @EditionId AND ""MovieId"" = @MovieId", change, transaction);
             transaction.Commit();
+        }
+
+        private static bool IsManualFileHistory(MovieHistory row, int movieId)
+        {
+            return row.MovieId == movieId && row.EditionRuleRevision > 0 &&
+                row.EditionOperationId == null && string.IsNullOrWhiteSpace(row.DownloadId) &&
+                (row.EventType is MovieHistoryEventType.DownloadFolderImported or MovieHistoryEventType.MovieFileDeleted or MovieHistoryEventType.MovieFileRenamed) &&
+                row.Data != null && row.Data.TryGetValue("movieEditionName", out var name) && !string.IsNullOrWhiteSpace(name) &&
+                !row.Data.Any(pair => (pair.Key.Equals(MovieHistory.DOWNLOAD_CLIENT_ID, StringComparison.OrdinalIgnoreCase) ||
+                    pair.Key.Equals("DownloadClient", StringComparison.OrdinalIgnoreCase) || pair.Key.Equals("DownloadClientName", StringComparison.OrdinalIgnoreCase)) &&
+                    !string.IsNullOrWhiteSpace(pair.Value));
         }
 
         public MovieEdition SetMonitoring(MovieEditionMonitoringChange change)

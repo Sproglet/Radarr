@@ -2169,5 +2169,9 @@
   "RemoveUnusedEdition": "Remove unused edition",
   "RemoveUnusedEditionConfirm": "Remove the unused edition '{edition}' from this movie?",
   "RemoveUnusedEditionHelpText": "Only empty, unmonitored secondary editions without saved work or history can be removed.",
-  "EditionRemovalFailed": "Unable to remove the unused edition."
+  "EditionRemovalFailed": "Unable to remove the unused edition.",
+  "EditionRetirementFailed": "Unable to retire this edition.",
+  "RetireEmptyEdition": "Retire empty edition",
+  "RetireEmptyEditionConfirm": "Retire \"{edition}\"? This removes the empty, unmonitored target. Its manual import, rename and deletion history will remain. Saved files, downloads or pending work prevent retirement.",
+  "RetireEmptyEditionHelpText": "Empty, unmonitored secondary editions can be retired while keeping manual file history. Delete their files separately first; download history and pending work require review."
 }

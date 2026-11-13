@@ -23,7 +23,7 @@ using NzbDrone.Core.Test.Framework;
 
 namespace NzbDrone.Core.Test.MovieTests
 {
-    public class MovieEditionRemovalFixture : DbTest<MovieEditionRepository, MovieEdition>
+    public partial class MovieEditionRemovalFixture : DbTest<MovieEditionRepository, MovieEdition>
     {
         private Movie _movie;
         private MovieEdition _primary;
@@ -143,15 +143,23 @@ namespace NzbDrone.Core.Test.MovieTests
             ((IDictionary<string, object>)connection.QuerySingle(@"SELECT * FROM ""Movies"" WHERE ""Id"" = @Id", _movie)).Should().BeEquivalentTo(movie);
         }
 
-        [TestCase("primary")]
-        [TestCase("movie-monitoring")]
-        [TestCase("edition-monitoring")]
-        [TestCase("file")]
-        [TestCase("profile")]
-        [TestCase("revision")]
-        [TestCase("name")]
-        [TestCase("other-target")]
-        public void stale_confirmation_preserves_the_target(string stale)
+        [TestCase("primary", false)]
+        [TestCase("primary", true)]
+        [TestCase("movie-monitoring", false)]
+        [TestCase("movie-monitoring", true)]
+        [TestCase("edition-monitoring", false)]
+        [TestCase("edition-monitoring", true)]
+        [TestCase("file", false)]
+        [TestCase("file", true)]
+        [TestCase("profile", false)]
+        [TestCase("profile", true)]
+        [TestCase("revision", false)]
+        [TestCase("revision", true)]
+        [TestCase("name", false)]
+        [TestCase("name", true)]
+        [TestCase("other-target", false)]
+        [TestCase("other-target", true)]
+        public void stale_confirmation_preserves_the_target(string stale, bool retirement)
         {
             var change = Change();
             switch (stale)
@@ -166,7 +174,7 @@ namespace NzbDrone.Core.Test.MovieTests
                 case "other-target": change.EditionId = _kept.Id; break;
             }
 
-            Action remove = () => Subject.RemoveUnused(change);
+            Action remove = () => { if (retirement) Subject.RetireEmpty(change); else Subject.RemoveUnused(change); };
             remove.Should().Throw<InvalidOperationException>();
             Subject.Get(_target.Id).Should().BeEquivalentTo(_target);
         }
@@ -257,11 +265,19 @@ namespace NzbDrone.Core.Test.MovieTests
             Subject.Get(_target.Id).Should().BeEquivalentTo(_target);
         }
 
-        [TestCase("pending")]
-        [TestCase("movie-grab")]
-        [TestCase("download-grab")]
-        public void concurrent_work_and_removal_leave_one_winner_without_dangling_assignment(string reference)
+        [TestCase("pending", false)]
+        [TestCase("pending", true)]
+        [TestCase("movie-grab", false)]
+        [TestCase("movie-grab", true)]
+        [TestCase("download-grab", false)]
+        [TestCase("download-grab", true)]
+        public void concurrent_work_and_removal_leave_one_winner_without_dangling_assignment(string reference, bool retirement)
         {
+            if (retirement)
+            {
+                Db.Insert(ManualHistory());
+            }
+
             var repository = Subject;
             _ = Mocker.Resolve<PendingReleaseRepository>();
             _ = Mocker.Resolve<HistoryRepository>();
@@ -270,7 +286,12 @@ namespace NzbDrone.Core.Test.MovieTests
             var remove = Task.Run(() =>
             {
                 start.Wait();
-                try { repository.RemoveUnused(Change()); return true; }
+                try
+                {
+                    if (retirement) repository.RetireEmpty(Change());
+                    else repository.RemoveUnused(Change());
+                    return true;
+                }
                 catch (InvalidOperationException) { return false; }
             });
             var work = Task.Run(() =>

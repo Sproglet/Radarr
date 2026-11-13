@@ -21,9 +21,9 @@ import EditEditionDefinitionModal, {
   DefinitionSelection,
 } from './EditEditionDefinitionModal';
 import EditionSubmissionsTable from './EditionSubmissionsTable';
-import RemoveUnusedEditionModal, {
+import RetireEmptyEditionModal, {
   RemovalSelection,
-} from './RemoveUnusedEditionModal';
+} from './RetireEmptyEditionModal';
 import SelectPrimaryEditionModal, {
   PrimarySelection,
 } from './SelectPrimaryEditionModal';
@@ -139,7 +139,7 @@ function RemoveEditionButton({
   const onPress = useCallback(() => onSelect(edition), [edition, onSelect]);
   return (
     <Button isDisabled={isDisabled} onPress={onPress}>
-      {translate('RemoveUnusedEdition')}
+      {translate('RetireEmptyEdition')}
     </Button>
   );
 }
@@ -374,7 +374,7 @@ function MovieEditionsTable({
       <p>{translate('PrimaryEditionHelpText')}</p>
       <p>{translate('EditionMonitoringHelpText')}</p>
       <p>{translate('AddEditionHelpText')}</p>
-      <p>{translate('RemoveUnusedEditionHelpText')}</p>
+      <p>{translate('RetireEmptyEditionHelpText')}</p>
       <Button isDisabled={!data || !!error} onPress={onAdd}>
         {translate('AddEdition')}
       </Button>
@@ -386,7 +386,7 @@ function MovieEditionsTable({
         onClose={onPrimaryClose}
       />
       <EditionSubmissionsTable movieId={movieId} />
-      <RemoveUnusedEditionModal
+      <RetireEmptyEditionModal
         movieId={movieId}
         selection={removalSelection}
         onRemoved={onRemoved}

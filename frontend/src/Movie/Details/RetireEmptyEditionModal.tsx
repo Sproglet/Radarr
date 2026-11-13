@@ -12,7 +12,7 @@ export interface RemovalSelection {
   expectedPrimaryEditionId: number;
 }
 
-function RemoveUnusedEditionModal({
+function RetireEmptyEditionModal({
   movieId,
   selection,
   onRemoved,
@@ -34,7 +34,7 @@ function RemoveUnusedEditionModal({
     setIsSubmitting(true);
     try {
       await postEdition<{ id: number; movieId: number }>(
-        `/movieedition/${selection.target.id}/remove`,
+        `/movieedition/${selection.target.id}/retire`,
         {
           movieId,
           expectedPrimaryEditionId: selection.expectedPrimaryEditionId,
@@ -48,7 +48,7 @@ function RemoveUnusedEditionModal({
       );
       onRemoved();
     } catch (requestError) {
-      const fallback = translate('EditionRemovalFailed');
+      const fallback = translate('EditionRetirementFailed');
       onError(
         requestError instanceof ApiError
           ? getErrorMessage(requestError, fallback) || fallback
@@ -61,11 +61,11 @@ function RemoveUnusedEditionModal({
   return (
     <ConfirmModal
       isOpen={!!selection}
-      title={translate('RemoveUnusedEdition')}
-      confirmLabel={translate('RemoveUnusedEdition')}
+      title={translate('RetireEmptyEdition')}
+      confirmLabel={translate('RetireEmptyEdition')}
       cancelLabel={translate('Cancel')}
       isSpinning={isSubmitting}
-      message={translate('RemoveUnusedEditionConfirm', {
+      message={translate('RetireEmptyEditionConfirm', {
         edition: selection?.target.name ?? '',
       })}
       onConfirm={onConfirm}
@@ -74,4 +74,4 @@ function RemoveUnusedEditionModal({
   );
 }
 
-export default RemoveUnusedEditionModal;
+export default RetireEmptyEditionModal;
