@@ -12,7 +12,7 @@ using NzbDrone.Core.Test.Framework;
 
 namespace NzbDrone.Core.Test.MovieTests
 {
-    public class EditionGrabImmutabilityFixture : DbTest
+    public partial class EditionGrabImmutabilityFixture : DbTest
     {
         private Movie _movie;
         private MovieEdition _edition;
@@ -71,7 +71,7 @@ namespace NzbDrone.Core.Test.MovieTests
             where T : ModelBase, new()
         {
             var type = typeof(T);
-            if (change == "client" || change == "name")
+            if (change is "client" or "name" or "client-type" or "client-name")
             {
                 if (change == "client" && record is DownloadHistory download)
                 {
@@ -80,7 +80,14 @@ namespace NzbDrone.Core.Test.MovieTests
                 }
 
                 var data = (Dictionary<string, string>)type.GetProperty("Data").GetValue(record);
-                data[change == "client" ? MovieHistory.DOWNLOAD_CLIENT_ID : "movieEditionName"] = "synthetic-changed";
+                var key = change switch
+                {
+                    "client" => MovieHistory.DOWNLOAD_CLIENT_ID,
+                    "client-type" => MovieHistory.DOWNLOAD_CLIENT,
+                    "client-name" => "downloadClientName",
+                    _ => "movieEditionName"
+                };
+                data[key] = "synthetic-changed";
                 return "Data";
             }
 
@@ -103,7 +110,7 @@ namespace NzbDrone.Core.Test.MovieTests
             return field;
         }
 
-        private static void RejectMutation<T>(BasicRepository<T> repository, T record, string change, string writer)
+        private static void RejectMutation<T>(BasicRepository<T> repository, T record, string change, string writer, string expectedMessage = "*grab identity*")
             where T : ModelBase, new()
         {
             repository.Insert(record);
@@ -112,7 +119,7 @@ namespace NzbDrone.Core.Test.MovieTests
 
             Action write = () => Write(repository, record, field, writer);
 
-            write.Should().Throw<InvalidOperationException>().WithMessage("*grab identity*");
+            write.Should().Throw<InvalidOperationException>().WithMessage(expectedMessage);
             System.Text.Json.JsonSerializer.Serialize(repository.Get(record.Id)).Should().Be(before);
         }
 
@@ -180,7 +187,7 @@ namespace NzbDrone.Core.Test.MovieTests
             }
         }
 
-        private static void RejectBatch<T>(BasicRepository<T> repository, T first, T second, bool partial)
+        private static void RejectBatch<T>(BasicRepository<T> repository, T first, T second, bool partial, string expectedMessage = "*grab identity*")
             where T : ModelBase, new()
         {
             typeof(T).GetProperty("DownloadId").SetValue(second, "synthetic-second");
@@ -200,7 +207,7 @@ namespace NzbDrone.Core.Test.MovieTests
                 }
             };
 
-            write.Should().Throw<InvalidOperationException>().WithMessage("*grab identity*");
+            write.Should().Throw<InvalidOperationException>().WithMessage(expectedMessage);
 
             var stored = (Dictionary<string, string>)typeof(T).GetProperty("Data").GetValue(repository.Get(first.Id));
             stored.Should().NotContainKey("syntheticNote");

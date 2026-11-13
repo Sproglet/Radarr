@@ -55,9 +55,12 @@ namespace NzbDrone.Core.History
         protected override void OnUpdating(IDbConnection connection, IDbTransaction transaction, MovieHistory history, List<string> properties)
         {
             var stored = connection.QuerySingle<MovieHistory>(@"SELECT * FROM ""History"" WHERE ""Id"" = @Id", history, transaction);
-            if (stored.MovieEditionId.HasValue && (stored.EventType == MovieHistoryEventType.Grabbed || stored.EditionOperationId != null))
+            var fileHistory = stored.EventType is MovieHistoryEventType.DownloadFolderImported or MovieHistoryEventType.MovieFileDeleted or MovieHistoryEventType.MovieFileRenamed;
+            if (stored.MovieEditionId.HasValue && (fileHistory || stored.EventType == MovieHistoryEventType.Grabbed || stored.EditionOperationId != null))
             {
+                // Preserve the recorded file assignment even after its target has been retired.
                 MovieEditionGrabGuard.ValidateSnapshot(
+                    fileHistory && stored.EditionOperationId == null ? "file history identity" : "grab identity",
                     properties,
                     (nameof(MovieHistory.MovieId), stored.MovieId, history.MovieId),
                     (nameof(MovieHistory.MovieEditionId), stored.MovieEditionId, history.MovieEditionId),
@@ -68,7 +71,11 @@ namespace NzbDrone.Core.History
                     (nameof(MovieHistory.Date), MovieEditionGrabGuard.TimestampMicroseconds(stored.Date), MovieEditionGrabGuard.TimestampMicroseconds(history.Date)),
                     (nameof(MovieHistory.EventType), stored.EventType, history.EventType),
                     (nameof(MovieHistory.Data), stored.Data?.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID), history.Data?.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT_ID)),
-                    (nameof(MovieHistory.Data), stored.Data?.GetValueOrDefault("movieEditionName"), history.Data?.GetValueOrDefault("movieEditionName")));
+                    (nameof(MovieHistory.Data), stored.Data?.GetValueOrDefault("movieEditionName"), history.Data?.GetValueOrDefault("movieEditionName")),
+                    (nameof(MovieHistory.Data), fileHistory ? stored.Data?.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT) : null,
+                        fileHistory ? history.Data?.GetValueOrDefault(MovieHistory.DOWNLOAD_CLIENT) : null),
+                    (nameof(MovieHistory.Data), fileHistory ? stored.Data?.GetValueOrDefault("downloadClientName") : null,
+                        fileHistory ? history.Data?.GetValueOrDefault("downloadClientName") : null));
                 return;
             }
 

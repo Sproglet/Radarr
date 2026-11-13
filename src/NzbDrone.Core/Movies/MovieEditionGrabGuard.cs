@@ -25,12 +25,15 @@ namespace NzbDrone.Core.Movies
         }
 
         public static void ValidateSnapshot(List<string> properties, params (string Property, object Stored, object Proposed)[] fields)
+            => ValidateSnapshot("grab identity", properties, fields);
+
+        public static void ValidateSnapshot(string identity, List<string> properties, params (string Property, object Stored, object Proposed)[] fields)
         {
             foreach (var field in fields)
             {
                 if (properties.Contains(field.Property) && !Equals(field.Stored, field.Proposed))
                 {
-                    throw new InvalidOperationException("Persisted edition grab identity cannot be changed through ordinary history updates.");
+                    throw new InvalidOperationException($"Persisted edition {identity} cannot be changed through ordinary history updates.");
                 }
             }
         }
