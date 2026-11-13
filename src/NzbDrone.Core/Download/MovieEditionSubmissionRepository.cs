@@ -26,6 +26,8 @@ namespace NzbDrone.Core.Download
         MovieEditionSubmission FindByOperationId(string operationId);
         bool HasUnsettled(int movieId, int? editionId = null);
         List<MovieEditionSubmission> RecentForMovie(int movieId);
+        int ReconciliationUpperBound();
+        List<MovieEditionSubmissionCandidate> ReconciliationCandidates(int afterId, int throughId, int limit);
     }
 
     public class MovieEditionSubmissionRepository : BasicRepository<MovieEditionSubmission>, IMovieEditionSubmissionRepository
@@ -48,6 +50,33 @@ namespace NzbDrone.Core.Download
         protected override bool RequiresLifecycleTransaction => true;
 
         public MovieEditionSubmission FindByOperationId(string operationId) => Query(s => s.OperationId == operationId).SingleOrDefault();
+
+        public int ReconciliationUpperBound()
+        {
+            using var connection = _database.OpenConnection();
+            return connection.ExecuteScalar<int>(@"SELECT COALESCE(MAX(""Id""), 0) FROM ""MovieEditionSubmissions"" WHERE ""State"" IN (1,2)");
+        }
+
+        public List<MovieEditionSubmissionCandidate> ReconciliationCandidates(int afterId, int throughId, int limit)
+        {
+            if (afterId < 0 || throughId < afterId || limit is < 1 or > 100)
+            {
+                throw new ArgumentException("Provide an ordered reconciliation range and a batch size from 1 to 100.");
+            }
+
+            using var connection = _database.OpenConnection();
+            return connection.Query<MovieEditionSubmissionCandidate>(
+                @"SELECT s.""Id"", s.""OperationId"",
+                    EXISTS (SELECT 1 FROM ""DownloadHistory"" d WHERE d.""EditionOperationId"" = s.""OperationId"" AND d.""EventType"" IN (2,3,4)) AS ""HasTerminalEvidence""
+                  FROM ""MovieEditionSubmissions"" s
+                  WHERE s.""Id"" > @AfterId AND s.""Id"" <= @ThroughId AND s.""State"" IN (1,2)
+                    AND (s.""State"" = 1
+                      OR NOT EXISTS (SELECT 1 FROM ""History"" h WHERE h.""EditionOperationId"" = s.""OperationId"" AND h.""EventType"" = 1)
+                      OR NOT EXISTS (SELECT 1 FROM ""DownloadHistory"" d WHERE d.""EditionOperationId"" = s.""OperationId"" AND d.""EventType"" = 1)
+                      OR EXISTS (SELECT 1 FROM ""DownloadHistory"" d WHERE d.""EditionOperationId"" = s.""OperationId"" AND d.""EventType"" IN (2,3,4)))
+                  ORDER BY s.""Id"" LIMIT @Limit",
+                new { AfterId = afterId, ThroughId = throughId, Limit = limit }).ToList();
+        }
 
         public List<MovieEditionSubmission> RecentForMovie(int movieId)
         {
@@ -222,9 +251,13 @@ namespace NzbDrone.Core.Download
                 throw new InvalidOperationException("Existing download-history grab conflicts with immutable prepared payload.");
             }
 
-            submission.State = MovieEditionSubmissionState.Recorded;
-            submission.UpdatedAt = DateTime.UtcNow;
-            connection.Execute(@"UPDATE ""MovieEditionSubmissions"" SET ""State"" = @State, ""UpdatedAt"" = @UpdatedAt WHERE ""Id"" = @Id", submission, transaction);
+            if (submission.State != MovieEditionSubmissionState.Recorded || existingMovie == null || existingDownload == null)
+            {
+                submission.State = MovieEditionSubmissionState.Recorded;
+                submission.UpdatedAt = DateTime.UtcNow;
+                connection.Execute(@"UPDATE ""MovieEditionSubmissions"" SET ""State"" = @State, ""UpdatedAt"" = @UpdatedAt WHERE ""Id"" = @Id", submission, transaction);
+            }
+
             submission = TrySettle(connection, transaction, operationId) ?? submission;
             transaction.Commit();
             return submission;

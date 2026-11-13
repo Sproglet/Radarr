@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import sys
 import subprocess
+import time
 import urllib.error
 
 sys.dont_write_bytecode = True
@@ -105,6 +106,14 @@ def run(postgres, browser=False, finished_history=False):
             "HistoryData"=?,"DownloadHistoryData"=?,"Languages"='[1]',"ParsedMovieInfo"=? WHERE "OperationId"=?''',
             (json.dumps(history_data), json.dumps(download_data), json.dumps(parsed), operation))
     p.start()
+    for _ in range(100):
+        recovered = p.api("api/v3/movieedition/submission?movieId=1")[0]
+        if recovered["state"] == "recorded":
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("Startup did not reconcile saved acceptance")
+    expected["expectedState"] = "recorded"
     assert p.api("api/v3/movieedition/submission?movieId=1")[0]["canReconcile"]
     for bad, status in [({**expected, "expectedDownloadId": "synthetic-wrong"}, 409), ({**expected, "movieEditionId": 99999}, 400)]:
         try:
@@ -113,9 +122,9 @@ def run(postgres, browser=False, finished_history=False):
             assert error.code == status, (error.code, error.read().decode())
         else:
             raise AssertionError("Stale/foreign reconciliation was accepted")
-    assert not any(row.get("EditionOperationId") == operation for row in p.rows("History"))
+    assert sum(row.get("EditionOperationId") == operation for row in p.rows("History")) == 1
     if browser:
-        subprocess.run(["node", "/src/docs/development/verify-edition-journal-browser.cjs", "accepted"] + (["--finished-history"] if finished_history else []), check=True)
+        subprocess.run(["node", "/src/docs/development/verify-edition-journal-browser.cjs", "recorded"] + (["--finished-history"] if finished_history else []), check=True)
         result = p.api("api/v3/movieedition/submission?movieId=1")[0]
     else:
         result = p.api(endpoint, expected)

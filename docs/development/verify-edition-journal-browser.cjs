@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const { chromium } = require('../../_temp/edition-browser-tools/node_modules/playwright-core');
 const mode = process.argv[2];
-assert.ok(['prepared', 'accepted'].includes(mode));
+assert.ok(['prepared', 'recorded'].includes(mode));
 const finishedHistory = process.argv[3] === '--finished-history';
 assert.ok(process.argv.length === 3 || (process.argv.length === 4 && finishedHistory));
 const root = 'http://127.0.0.1:17878';
@@ -20,6 +20,7 @@ const root = 'http://127.0.0.1:17878';
   await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
   try {
     await page.goto(root + '/movie/-1000001');
+    await page.waitForLoadState('networkidle');
     await page.getByRole('heading', { name: 'Submission review', exact: true }).waitFor();
     if (finishedHistory) assert.equal(await page.getByText('Settled', { exact: true }).count(), 100);
     const repair = page.getByRole('button', { name: 'Repair saved history', exact: true });
@@ -52,7 +53,7 @@ const root = 'http://127.0.0.1:17878';
       await modal.getByRole('button', { name: 'Repair saved history', exact: true }).click();
       const response = await pending;
       assert.equal(response.status(), 200, await response.text());
-      assert.deepEqual(response.request().postDataJSON(), { movieId: 1, movieEditionId: 2, expectedState: 'accepted', expectedDownloadId: 'synthetic-download' });
+      assert.deepEqual(response.request().postDataJSON(), { movieId: 1, movieEditionId: 2, expectedState: 'recorded', expectedDownloadId: 'synthetic-download' });
       await page.getByText('History recorded', { exact: true }).waitFor();
       assert.equal(writes.length, 2);
       assert.ok(writes.every(url => url.includes('/movieedition/submission/') && url.endsWith('/reconcile')));
